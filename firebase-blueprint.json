@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "Store": {
+      "title": "Store",
+      "description": "Store entity for multi-tenant SaaS readiness",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique store identifier" },
+        "name": { "type": "string", "description": "Store or business name", "maxLength": 100 },
+        "ownerEmail": { "type": "string", "description": "Owner email address", "maxLength": 120 },
+        "latitude": { "type": "number", "description": "Store physical location latitude" },
+        "longitude": { "type": "number", "description": "Store physical location longitude" },
+        "geofenceRadiusMeters": { "type": "number", "description": "Maximum allowed customer checkout distance for high-trust GPS verification" },
+        "fraudThresholdScore": { "type": "number", "description": "Risk score above which transactions require admin approval (0-100)" },
+        "currency": { "type": "string", "description": "Store currency code (e.g. USD, IDR)", "maxLength": 5 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "name", "ownerEmail", "latitude", "longitude"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product with automatic carton-to-unit conversion",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "storeId": { "type": "string", "description": "Multi-tenant store foreign key" },
+        "name": { "type": "string", "description": "Product title", "maxLength": 120 },
+        "sku": { "type": "string", "description": "Stock keeping unit code", "maxLength": 50 },
+        "category": { "type": "string", "description": "Category name", "maxLength": 50 },
+        "barcode": { "type": "string", "description": "Barcode number", "maxLength": 60 },
+        "piecesPerCarton": { "type": "number", "description": "Number of individual retail units inside 1 carton/dus" },
+        "stockInUnits": { "type": "number", "description": "Current total retail units available in stock" },
+        "costPerUnit": { "type": "number", "description": "Wholesale COGS purchase price per individual unit" },
+        "pricePerUnit": { "type": "number", "description": "Retail selling price for 1 individual unit" },
+        "pricePerCarton": { "type": "number", "description": "Special wholesale selling price for 1 whole carton" },
+        "minStockAlert": { "type": "number", "description": "Minimum unit threshold to trigger low stock restock alert" },
+        "imageUrl": { "type": "string", "description": "Product display image URL", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "storeId", "name", "sku", "piecesPerCarton", "stockInUnits", "pricePerUnit"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "POS or Client PWA sales order with anti-fraud analysis and GPS telemetry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Transaction identifier" },
+        "storeId": { "type": "string", "description": "Associated store identifier" },
+        "channel": { "type": "string", "enum": ["pos", "pwa_client"], "description": "Origin of transaction" },
+        "customerName": { "type": "string", "description": "Customer name or walk-in guest", "maxLength": 100 },
+        "customerPhone": { "type": "string", "description": "Customer phone number (verified via OTP in PWA)", "maxLength": 30 },
+        "totalAmount": { "type": "number", "description": "Total payment amount" },
+        "totalCost": { "type": "number", "description": "Total COGS for margin calculation" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "qris", "card", "bank_transfer"], "description": "Payment channel" },
+        "status": { "type": "string", "enum": ["completed", "flagged_fraud", "pending_approval", "rejected"], "description": "Order validation status" },
+        "fraudScore": { "type": "number", "description": "Calculated fraud risk score from 0 (clean) to 100 (critical threat)" },
+        "fraudFlags": { "type": "string", "description": "Comma-separated risk flags triggered during checkout" },
+        "riskLevel": { "type": "string", "enum": ["clean", "low", "medium", "high", "critical"], "description": "Evaluated risk severity" },
+        "customerLatitude": { "type": "number", "description": "Checkout device latitude" },
+        "customerLongitude": { "type": "number", "description": "Checkout device longitude" },
+        "distanceToStoreMeters": { "type": "number", "description": "Calculated geodesic distance from verified store GPS" },
+        "gpsAccuracy": { "type": "number", "description": "GPS accuracy in meters" },
+        "isMockGpsSuspected": { "type": "string", "description": "Indicator of mock GPS or impossible spoofing" },
+        "aiExplanation": { "type": "string", "description": "Preventive AI anomaly detection analysis report", "maxLength": 1000 },
+        "cashierId": { "type": "string", "description": "Staff ID who handled the sale (POS channel)", "maxLength": 60 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "storeId", "channel", "totalAmount", "status", "fraudScore"]
+    },
+    "TransactionItem": {
+      "title": "TransactionItem",
+      "description": "Item line belonging to a transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Item line ID" },
+        "storeId": { "type": "string", "description": "Associated store identifier" },
+        "transactionId": { "type": "string", "description": "Parent transaction document ID" },
+        "productId": { "type": "string", "description": "Product ID referenced" },
+        "productName": { "type": "string", "description": "Snapshot of product name", "maxLength": 120 },
+        "packageType": { "type": "string", "enum": ["carton", "unit"], "description": "Carton or retail unit" },
+        "quantityOrdered": { "type": "number", "description": "Number of packages bought" },
+        "unitsDeducted": { "type": "number", "description": "Equivalent retail units deducted from inventory" },
+        "unitPrice": { "type": "number", "description": "Price charged per item" },
+        "subtotal": { "type": "number", "description": "Calculated subtotal price" }
+      },
+      "required": ["id", "storeId", "transactionId", "productId", "packageType", "quantityOrdered", "unitsDeducted", "subtotal"]
+    },
+    "FraudLog": {
+      "title": "FraudLog",
+      "description": "Audit record of detected anomalies and preventative interventions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Audit log identifier" },
+        "storeId": { "type": "string", "description": "Associated store identifier" },
+        "transactionId": { "type": "string", "description": "Target transaction identifier" },
+        "riskLevel": { "type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Anomaly severity" },
+        "anomalyType": { "type": "string", "description": "Specific anomaly classification", "maxLength": 100 },
+        "summary": { "type": "string", "description": "Short synopsis of threat", "maxLength": 200 },
+        "aiDetails": { "type": "string", "description": "Detailed Gemini preventive AI forensic breakdown", "maxLength": 1000 },
+        "resolved": { "type": "string", "description": "Resolution status 'true' or 'false'" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Detection timestamp" }
+      },
+      "required": ["id", "storeId", "transactionId", "riskLevel", "anomalyType", "summary"]
+    },
+    "RestockRecommendation": {
+      "title": "RestockRecommendation",
+      "description": "AI Restock Advisor recommendations based on stock velocity, carton conversion rate, and lead time",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Recommendation identifier" },
+        "storeId": { "type": "string", "description": "Associated store identifier" },
+        "productId": { "type": "string", "description": "Target product identifier" },
+        "productName": { "type": "string", "description": "Target product name", "maxLength": 120 },
+        "currentStockUnits": { "type": "number", "description": "Stock count right now" },
+        "piecesPerCarton": { "type": "number", "description": "Pieces per dus" },
+        "suggestedCartons": { "type": "number", "description": "Recommended cartons to order wholesale" },
+        "estimatedCost": { "type": "number", "description": "Projected restock capital required" },
+        "urgency": { "type": "string", "enum": ["urgent", "medium", "optimal"], "description": "Restock urgency level" },
+        "aiRationale": { "type": "string", "description": "Gemini AI explanation for recommendation", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Recommendation generation date" }
+      },
+      "required": ["id", "storeId", "productId", "suggestedCartons", "urgency"]
+    }
+  },
+  "firestore": {
+    "/stores/{storeId}": {
+      "schema": { "$ref": "#/entities/Store" },
+      "description": "Store configurations and GPS anti-fraud reference points"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Store inventory products with unit & carton conversions"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "POS and PWA customer checkout transactions with fraud risk scores"
+    },
+    "/transactions/{transactionId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/TransactionItem" },
+      "description": "Line items with carton-to-unit converted counts"
+    },
+    "/fraud_logs/{logId}": {
+      "schema": { "$ref": "#/entities/FraudLog" },
+      "description": "Preventive AI fraud logs and audit trails"
+    },
+    "/restock_recommendations/{recId}": {
+      "schema": { "$ref": "#/entities/RestockRecommendation" },
+      "description": "AI Restock Advisor intelligent inventory forecasts"
+    }
+  }
+}
