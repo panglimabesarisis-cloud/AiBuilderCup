@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   CreditCard,
@@ -71,7 +72,7 @@ export const PaymentIntegrationModule: React.FC<PaymentIntegrationModuleProps> =
   });
 
   // Recent Payment Gateway Transactions
-  const [gatewayTransactions, setGatewayTransactions] = useState([
+  const [gatewayTransactions, setGatewayTransactions] = useFirestoreList('gateway_transactions', [
     {
       id: 'PAY-XND-9812',
       gateway: 'Xendit',

@@ -46,13 +46,29 @@ interface ChartPoint {
 }
 
 interface AdminAreaChartsProps {
-  dataMode?: 'screenshot_empty' | 'live_demo';
+  transactions?: any[];
+  products?: any[];
+  purchaseOrders?: any[];
   onNavigateTab?: (tab: string) => void;
   onOpenAddProduct?: () => void;
 }
 
+const ID_MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, mei: 4, jun: 5, jul: 6, agu: 7, ags: 7, sep: 8, okt: 9, nov: 10, des: 11 };
+// Mengubah "08 Okt 2026" atau ISO menjadi Date; null jika tidak terbaca.
+const parseDocDate = (v: any): Date | null => {
+  if (!v) return null;
+  const iso = new Date(v);
+  if (!isNaN(iso.getTime()) && /\d{4}-\d{2}-\d{2}/.test(String(v))) return iso;
+  const m = String(v).trim().match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})$/);
+  if (!m) return null;
+  const mon = ID_MONTHS[m[2].toLowerCase()];
+  return mon === undefined ? null : new Date(Number(m[3]), mon, Number(m[1]));
+};
+
 export const AdminAreaCharts: React.FC<AdminAreaChartsProps> = ({
-  dataMode = 'screenshot_empty',
+  transactions = [],
+  products = [],
+  purchaseOrders = [],
   onNavigateTab,
   onOpenAddProduct,
 }) => {
@@ -73,85 +89,74 @@ export const AdminAreaCharts: React.FC<AdminAreaChartsProps> = ({
   const [hoveredChart, setHoveredChart] = useState<string | null>(null);
   const [hoverXRatio, setHoverXRatio] = useState<number | null>(null);
 
-  // Generate responsive mock & realistic data based on timeframe
+  // Data nyata: penjualan dari transaksi selesai, pembelian dari purchase_orders, aset dari stok produk saat ini.
   const chartData = useMemo<ChartPoint[]>(() => {
     const pointsCount = timeframe === '7d' ? 7 : timeframe === '14d' ? 14 : timeframe === '30d' ? 30 : timeframe === 'month' ? 28 : 12;
     const now = new Date();
-    const data: ChartPoint[] = [];
-
-    // Base values to simulate realistic retail store with realistic variance
-    let baseStockUnits = 2400;
-    let baseAssetCost = 42000000;
-
+    const buckets: { start: Date; end: Date; label: string; date: string }[] = [];
     for (let i = pointsCount - 1; i >= 0; i--) {
-      const d = new Date(now);
+      let start: Date;
+      let end: Date;
       if (timeframe === 'year') {
-        d.setMonth(d.getMonth() - i);
+        start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
       } else {
-        d.setDate(d.getDate() - i);
+        start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i + 1);
       }
-
-      const dayIndex = d.getDay();
-      const isWeekend = dayIndex === 0 || dayIndex === 6;
-      const isRestockDay = dayIndex === 1 || dayIndex === 4; // Monday & Thursday restock
-
-      const dateStr = timeframe === 'year' 
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
-        : d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
-
+      const dateStr = timeframe === 'year'
+        ? start.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
+        : start.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
       const dayName = timeframe === 'year'
-        ? d.toLocaleDateString('id-ID', { month: 'long' })
-        : d.toLocaleDateString('id-ID', { weekday: 'short' });
-
-      // In empty mode without demo data, we still provide a baseline curve with clear indicator
-      const multiplier = dataMode === 'screenshot_empty' ? 0.75 : 1.25;
-
-      // Realistic Sales calculation: higher on weekends
-      const baseDailySales = isWeekend ? 3400000 : 2100000;
-      const noiseSales = Math.sin(i * 1.3) * 600000 + Math.cos(i * 0.7) * 450000;
-      const penjualan = Math.max(800000, Math.round((baseDailySales + noiseSales) * multiplier));
-      const penjualanUnits = Math.round(penjualan / 26000);
-      const transaksiCount = Math.round(penjualan / 85000);
-
-      // Realistic Purchase (Pembelian / Kulakan): spikes on restock days
-      let pembelian = 0;
-      let pembelianUnits = 0;
-      let poCount = 0;
-      if (isRestockDay || timeframe === 'year') {
-        pembelian = Math.round((isWeekend ? 3800000 : 5400000 + Math.sin(i * 2.1) * 1200000) * multiplier);
-        pembelianUnits = Math.round(pembelian / 19500);
-        poCount = Math.floor(Math.random() * 2) + 1;
-      } else if (i % 3 === 0) {
-        pembelian = Math.round(1450000 * multiplier);
-        pembelianUnits = Math.round(pembelian / 21000);
-        poCount = 1;
-      }
-
-      // Stock units fluctuation: stock = prev stock + purchases - sales
-      baseStockUnits = Math.max(1200, baseStockUnits + pembelianUnits - penjualanUnits);
-      
-      // Asset valuation: cost & retail
-      baseAssetCost = Math.round(baseStockUnits * 18500);
-      const assetTotal = Math.round(baseAssetCost * 1.34); // ~34% retail margin
-
-      data.push({
-        date: dateStr,
-        label: `${dayName}, ${dateStr}`,
-        penjualan,
-        penjualanUnits,
-        transaksiCount,
-        assetTotal,
-        assetCost: baseAssetCost,
-        assetUnits: baseStockUnits,
-        pembelian,
-        pembelianUnits,
-        poCount,
-        stokUnits: baseStockUnits,
-      });
+        ? start.toLocaleDateString('id-ID', { month: 'long' })
+        : start.toLocaleDateString('id-ID', { weekday: 'short' });
+      buckets.push({ start, end, date: dateStr, label: `${dayName}, ${dateStr}` });
     }
 
-    return data;
-  }, [timeframe, dataMode]);
+    const done = transactions.filter((t) => t.status === 'completed');
+    const inB = (d: Date | null, b: { start: Date; end: Date }) => !!d && d >= b.start && d < b.end;
+    const stockNow = products.reduce((a, p) => a + (Number(p.stockInUnits) || 0), 0);
+    const costNow = products.reduce((a, p) => a + (Number(p.stockInUnits) || 0) * (Number(p.costPerUnit) || 0), 0);
+    const retailNow = products.reduce((a, p) => a + (Number(p.stockInUnits) || 0) * (Number(p.pricePerUnit) || 0), 0);
+    const avgCost = stockNow > 0 ? costNow / stockNow : 0;
+    const avgRetail = stockNow > 0 ? retailNow / stockNow : 0;
+
+    const rows = buckets.map((b) => {
+      const tx = done.filter((t) => inB(parseDocDate(t.createdAt), b));
+      const penjualan = tx.reduce((a, t) => a + (Number(t.totalAmount) || 0), 0);
+      const penjualanUnits = tx.reduce(
+        (a, t) => a + (t.items || []).reduce((x: number, i: any) => x + (Number(i.unitsDeducted) || Number(i.quantityOrdered) || 0), 0),
+        0
+      );
+      const pos = purchaseOrders.filter((o) => inB(parseDocDate(o.date), b));
+      const pembelian = pos.reduce((a, o) => a + (Number(o.totalAmount) || 0), 0);
+      const pembelianUnits = pos.reduce((a, o) => a + (Number(o.itemsCount) || 0), 0);
+      return { b, penjualan, penjualanUnits, transaksiCount: tx.length, pembelian, pembelianUnits, poCount: pos.length };
+    });
+
+    // Stok per titik direkonstruksi mundur dari stok saat ini: stok_sebelum = stok_sesudah + terjual - dibeli
+    const stokAt: number[] = new Array(rows.length);
+    let running = stockNow;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      stokAt[i] = Math.max(0, Math.round(running));
+      running = running + rows[i].penjualanUnits - rows[i].pembelianUnits;
+    }
+
+    return rows.map((r, i) => ({
+      date: r.b.date,
+      label: r.b.label,
+      penjualan: r.penjualan,
+      penjualanUnits: r.penjualanUnits,
+      transaksiCount: r.transaksiCount,
+      assetTotal: Math.round(stokAt[i] * avgRetail),
+      assetCost: Math.round(stokAt[i] * avgCost),
+      assetUnits: stokAt[i],
+      pembelian: r.pembelian,
+      pembelianUnits: r.pembelianUnits,
+      poCount: r.poCount,
+      stokUnits: stokAt[i],
+    }));
+  }, [timeframe, transactions, products, purchaseOrders]);
 
   // Aggregate Metrics
   const summaryMetrics = useMemo(() => {

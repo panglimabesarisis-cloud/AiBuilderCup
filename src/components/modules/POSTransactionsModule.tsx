@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState, useEffect } from 'react';
 import {
   ShoppingBag,
@@ -176,7 +177,7 @@ export const POSTransactionsModule: React.FC<POSTransactionsModuleProps> = ({
   const [refundSuccessMsg, setRefundSuccessMsg] = useState('');
 
   // Pendapatan Masuk Ledger
-  const [incomes, setIncomes] = useState([
+  const [incomes, setIncomes] = useFirestoreList('incomes', [
     {
       id: 'INC-202610-01',
       date: '10 Okt 2026, 12:45 WIB',
@@ -227,7 +228,7 @@ export const POSTransactionsModule: React.FC<POSTransactionsModuleProps> = ({
   const [settlementNote, setSettlementNote] = useState('Pelunasan sisa nota kasbon');
 
   // Pengeluaran Toko Ledger
-  const [expenses, setExpenses] = useState([
+  const [expenses, setExpenses] = useFirestoreList('expenses', [
     {
       id: 'EXP-202610-01',
       date: '10 Okt 2026, 09:30 WIB',

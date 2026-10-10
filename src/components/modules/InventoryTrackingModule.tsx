@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState, useEffect } from 'react';
 import {
   Boxes,
@@ -77,7 +78,7 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
   }, []);
 
   // Stock Movement Ledger (Kartu Stok)
-  const [stockCards, setStockCards] = useState([
+  const [stockCards, setStockCards] = useFirestoreList('stock_cards', [
     {
       id: 'MUT-202610-001',
       date: '10 Okt 2026, 11:30 WIB',
@@ -146,7 +147,7 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
   ]);
 
   // Stock Opname Sessions
-  const [opnameList, setOpnameList] = useState([
+  const [opnameList, setOpnameList] = useFirestoreList('stock_opname', [
     {
       id: 'OPN-202610-01',
       date: '09 Okt 2026',

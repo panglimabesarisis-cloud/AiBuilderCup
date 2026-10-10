@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   Store,
@@ -31,7 +32,7 @@ export const MultiOutletModule: React.FC<MultiOutletModuleProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Outlets Data
-  const [outlets, setOutlets] = useState([
+  const [outlets, setOutlets] = useFirestoreList('outlets', [
     {
       id: 'out_1',
       name: 'RiskCart Flagship Store (Pusat)',
@@ -77,7 +78,7 @@ export const MultiOutletModule: React.FC<MultiOutletModuleProps> = ({
   ]);
 
   // Warehouses Data
-  const [warehouses, setWarehouses] = useState([
+  const [warehouses, setWarehouses] = useFirestoreList('warehouses', [
     {
       id: 'wh_1',
       name: 'Central Distribution Center (CDC Cikarang)',

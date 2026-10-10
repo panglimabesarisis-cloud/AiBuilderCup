@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   UserCheck,
@@ -34,7 +35,7 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Staff Employees
-  const [staffList, setStaffList] = useState([
+  const [staffList, setStaffList] = useFirestoreList('staff', [
     {
       id: 'STF-01',
       name: 'Ahmad Fauzi',
@@ -82,7 +83,7 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
   ]);
 
   // Roles & Permissions (Role / Jabatan & Hak Akses)
-  const [roles, setRoles] = useState([
+  const [roles, setRoles] = useFirestoreList('staff_roles', [
     {
       id: 'role_admin',
       name: 'Owner & Super Admin',

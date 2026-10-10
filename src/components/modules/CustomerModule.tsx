@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState, useEffect } from 'react';
 import {
   Users,
@@ -57,7 +58,7 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
   }, [subModule]);
 
   // Comprehensive Customers Data
-  const [customers, setCustomers] = useState([
+  const [customers, setCustomers] = useFirestoreList('customers', [
     {
       id: 'CUST-001',
       name: 'Budi Santoso',
@@ -128,7 +129,7 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
 
   // Rewards catalog (Claim Hadiah)
-  const [rewards, setRewards] = useState([
+  const [rewards, setRewards] = useFirestoreList('rewards', [
     {
       id: 'RWD-01',
       name: 'Voucher Belanja Rp 25.000',
@@ -164,7 +165,7 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
   ]);
 
   // Points Ledger History
-  const [pointLedger, setPointLedger] = useState([
+  const [pointLedger, setPointLedger] = useFirestoreList('point_ledger', [
     {
       id: 'PTS-202610-01',
       date: '10 Okt 2026, 11:35 WIB',
@@ -198,7 +199,7 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
   ]);
 
   // Subscriptions (Langganan)
-  const [subscriptions, setSubscriptions] = useState([
+  const [subscriptions, setSubscriptions] = useFirestoreList('subscriptions', [
     {
       id: 'SUB-202610-01',
       customerName: 'Budi Santoso',

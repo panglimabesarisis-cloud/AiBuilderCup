@@ -1,4 +1,6 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
+import { useSetting } from '../../hooks/useSetting';
 import {
   Settings,
   Store,
@@ -69,60 +71,48 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
   const [pingResult, setPingResult] = useState<string | null>(null);
 
   // ================= 1. UMUM =================
-  const [autoLockMinutes, setAutoLockMinutes] = useState(10);
-  const [barcodeEnterSubmits, setBarcodeEnterSubmits] = useState(true);
-  const [soundBeepEnabled, setSoundBeepEnabled] = useState(true);
-  const [allowManualCashierDiscount, setAllowManualCashierDiscount] = useState(false);
-  const [maxCashierDiscountPct, setMaxCashierDiscountPct] = useState(10);
-  const [autoOpenCashDrawerOnCash, setAutoOpenCashDrawerOnCash] = useState(true);
-
-  // ================= 2. TOKO =================
+  const [autoLockMinutes, setAutoLockMinutes] = useSetting('pos', 'autoLockMinutes', 10);
+  const [barcodeEnterSubmits, setBarcodeEnterSubmits] = useSetting('pos', 'barcodeEnterSubmits', true);
+  const [soundBeepEnabled, setSoundBeepEnabled] = useSetting('pos', 'soundBeepEnabled', true);
+  const [allowManualCashierDiscount, setAllowManualCashierDiscount] = useSetting('pos', 'allowManualCashierDiscount', false);
+  const [maxCashierDiscountPct, setMaxCashierDiscountPct] = useSetting('pos', 'maxCashierDiscountPct', 10);
+  const [autoOpenCashDrawerOnCash, setAutoOpenCashDrawerOnCash] = useSetting('pos', 'autoOpenCashDrawerOnCash', true);// ================= 2. TOKO =================
   const [selectedOutlet, setSelectedOutlet] = useState('OUT-01');
-  const [storeName, setStoreName] = useState('RiskCart Official POS - Cabang Kelapa Gading');
-  const [storeAddress, setStoreAddress] = useState('Jl. Boulevard Raya Blok QF1 No. 12, Kelapa Gading, Jakarta Utara');
-  const [storePhone, setStorePhone] = useState('(021) 4587-9922');
-  const [storeTaxNumber, setStoreTaxNumber] = useState('01.234.567.8-012.000');
-  const [storeFooterNote, setStoreFooterNote] = useState('Terima kasih telah berbelanja di RiskCart! Barang yang sudah dibeli tidak dapat ditukar tanpa bukti struk resmi.');
-
-  // ================= 3. PEMBAYARAN =================
-  const [acceptCash, setAcceptCash] = useState(true);
-  const [acceptQris, setAcceptQris] = useState(true);
-  const [acceptEdc, setAcceptEdc] = useState(true);
-  const [acceptKasbon, setAcceptKasbon] = useState(true);
-  const [acceptCod, setAcceptCod] = useState(true);
-  const [cashRoundingMode, setCashRoundingMode] = useState<'none' | 'floor_100' | 'ceil_500'>('floor_100');
-  const [maxCashDrawerAlert, setMaxCashDrawerAlert] = useState(3000000); // 3jt warning
-  const [requireCashCountOnShiftClose, setRequireCashCountOnShiftClose] = useState(true);
-
-  // ================= 4. PRINTER STRUK =================
-  const [printerInterface, setPrinterInterface] = useState<'bluetooth' | 'usb' | 'network'>('usb');
-  const [printerPaperSize, setPrinterPaperSize] = useState<'58mm' | '80mm'>('80mm');
-  const [networkPrinterIp, setNetworkPrinterIp] = useState('192.168.1.200');
-  const [networkPrinterPort, setNetworkPrinterPort] = useState('9100');
-  const [autoCutPaper, setAutoCutPaper] = useState(true);
-  const [printCopies, setPrintCopies] = useState<1 | 2>(1);
-  const [printStoreLogo, setPrintStoreLogo] = useState(true);
-  const [printTaxDetail, setPrintTaxDetail] = useState(true);
-  const [printCustomerPoints, setPrintCustomerPoints] = useState(true);
-  const [printReceiptBarcode, setPrintReceiptBarcode] = useState(true);
-
-  // ================= 5. GLOBAL SETUP =================
-  const [defaultCurrency, setDefaultCurrency] = useState<'IDR' | 'USD'>('IDR');
-  const [systemTimezone, setSystemTimezone] = useState('Asia/Jakarta (WIB)');
-  const [defaultTaxRate, setDefaultTaxRate] = useState(11); // PPN 11%
-  const [serviceChargeRate, setServiceChargeRate] = useState(0);
-  const [skuPrefixFormat, setSkuPrefixFormat] = useState('RC-SEM-{RAND4}');
-  const [lowStockDefaultAlert, setLowStockDefaultAlert] = useState(10);
-
-  // ================= 6. HAK DAN AKSES =================
-  const [requireSupervisorPinForVoid, setRequireSupervisorPinForVoid] = useState(true);
-  const [requirePinForDrawerKick, setRequirePinForDrawerKick] = useState(true);
-  const [requirePinForReprintOld, setRequirePinForReprintOld] = useState(false);
-  const [supervisorPin, setSupervisorPin] = useState('8899');
-  const [managerPin, setManagerPin] = useState('123456');
-
-  // ================= 7. BACKUP AND RESTORE =================
-  const [backupSnapshots, setBackupSnapshots] = useState([
+  const [storeName, setStoreName] = useSetting('pos', 'storeName', 'RiskCart Official POS - Cabang Kelapa Gading');
+  const [storeAddress, setStoreAddress] = useSetting('pos', 'storeAddress', 'Jl. Boulevard Raya Blok QF1 No. 12, Kelapa Gading, Jakarta Utara');
+  const [storePhone, setStorePhone] = useSetting('pos', 'storePhone', '(021) 4587-9922');
+  const [storeTaxNumber, setStoreTaxNumber] = useSetting('pos', 'storeTaxNumber', '01.234.567.8-012.000');
+  const [storeFooterNote, setStoreFooterNote] = useSetting('pos', 'storeFooterNote', 'Terima kasih telah berbelanja di RiskCart! Barang yang sudah dibeli tidak dapat ditukar tanpa bukti struk resmi.');// ================= 3. PEMBAYARAN =================
+  const [acceptCash, setAcceptCash] = useSetting('pos', 'acceptCash', true);
+  const [acceptQris, setAcceptQris] = useSetting('pos', 'acceptQris', true);
+  const [acceptEdc, setAcceptEdc] = useSetting('pos', 'acceptEdc', true);
+  const [acceptKasbon, setAcceptKasbon] = useSetting('pos', 'acceptKasbon', true);
+  const [acceptCod, setAcceptCod] = useSetting('pos', 'acceptCod', true);
+  const [cashRoundingMode, setCashRoundingMode] = useSetting<'none' | 'floor_100' | 'ceil_500'>('pos', 'cashRoundingMode', 'floor_100');
+  const [maxCashDrawerAlert, setMaxCashDrawerAlert] = useSetting('pos', 'maxCashDrawerAlert', 3000000);// 3jt warning
+  const [requireCashCountOnShiftClose, setRequireCashCountOnShiftClose] = useSetting('pos', 'requireCashCountOnShiftClose', true);// ================= 4. PRINTER STRUK =================
+  const [printerInterface, setPrinterInterface] = useSetting<'bluetooth' | 'usb' | 'network'>('pos', 'printerInterface', 'usb');
+  const [printerPaperSize, setPrinterPaperSize] = useSetting<'58mm' | '80mm'>('pos', 'printerPaperSize', '80mm');
+  const [networkPrinterIp, setNetworkPrinterIp] = useSetting('pos', 'networkPrinterIp', '192.168.1.200');
+  const [networkPrinterPort, setNetworkPrinterPort] = useSetting('pos', 'networkPrinterPort', '9100');
+  const [autoCutPaper, setAutoCutPaper] = useSetting('pos', 'autoCutPaper', true);
+  const [printCopies, setPrintCopies] = useSetting<1 | 2>('pos', 'printCopies', 1);
+  const [printStoreLogo, setPrintStoreLogo] = useSetting('pos', 'printStoreLogo', true);
+  const [printTaxDetail, setPrintTaxDetail] = useSetting('pos', 'printTaxDetail', true);
+  const [printCustomerPoints, setPrintCustomerPoints] = useSetting('pos', 'printCustomerPoints', true);
+  const [printReceiptBarcode, setPrintReceiptBarcode] = useSetting('pos', 'printReceiptBarcode', true);// ================= 5. GLOBAL SETUP =================
+  const [defaultCurrency, setDefaultCurrency] = useSetting<'IDR' | 'USD'>('pos', 'defaultCurrency', 'IDR');
+  const [systemTimezone, setSystemTimezone] = useSetting('pos', 'systemTimezone', 'Asia/Jakarta (WIB)');
+  const [defaultTaxRate, setDefaultTaxRate] = useSetting('pos', 'defaultTaxRate', 11);// PPN 11%
+  const [serviceChargeRate, setServiceChargeRate] = useSetting('pos', 'serviceChargeRate', 0);
+  const [skuPrefixFormat, setSkuPrefixFormat] = useSetting('pos', 'skuPrefixFormat', 'RC-SEM-{RAND4}');
+  const [lowStockDefaultAlert, setLowStockDefaultAlert] = useSetting('pos', 'lowStockDefaultAlert', 10);// ================= 6. HAK DAN AKSES =================
+  const [requireSupervisorPinForVoid, setRequireSupervisorPinForVoid] = useSetting('pos', 'requireSupervisorPinForVoid', true);
+  const [requirePinForDrawerKick, setRequirePinForDrawerKick] = useSetting('pos', 'requirePinForDrawerKick', true);
+  const [requirePinForReprintOld, setRequirePinForReprintOld] = useSetting('pos', 'requirePinForReprintOld', false);
+  const [supervisorPin, setSupervisorPin] = useSetting('pos', 'supervisorPin', '8899');
+  const [managerPin, setManagerPin] = useSetting('pos', 'managerPin', '123456');// ================= 7. BACKUP AND RESTORE =================
+  const [backupSnapshots, setBackupSnapshots] = useFirestoreList('backup_snapshots', [
     {
       id: 'BKP-20261010-0900',
       timestamp: '10 Okt 2026, 09:00 WIB',
@@ -150,7 +140,7 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
   ]);
 
   // ================= 8. PAYMENT GATEWAYS REGISTRY (5.21) =================
-  const [selectedGatewayTab, setSelectedGatewayTab] = useState<'xendit' | 'midtrans' | 'doku' | 'tripay'>('xendit');
+  const [selectedGatewayTab, setSelectedGatewayTab] = useSetting<'xendit' | 'midtrans' | 'doku' | 'tripay'>('pos', 'selectedGatewayTab', 'xendit');
   const [gatewaysData, setGatewaysData] = useState({
     xendit: {
       name: 'Xendit Payments Indonesia',
@@ -207,7 +197,7 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
   });
 
   // Settlement History
-  const [settlementHistory, setSettlementHistory] = useState([
+  const [settlementHistory, setSettlementHistory] = useFirestoreList('settlement_history', [
     {
       id: 'SETTLE-20261010-01',
       gateway: 'Xendit',
@@ -241,7 +231,7 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
   ]);
 
   // ================= 9. AUDIT LOG =================
-  const [auditLogs, setAuditLogs] = useState([
+  const [auditLogs, setAuditLogs] = useFirestoreList('audit_logs', [
     {
       id: 'AUD-001',
       timestamp: '10 Okt 2026, 12:35 WIB',

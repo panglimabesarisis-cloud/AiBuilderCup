@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useProductGroups } from '../../hooks/useProductGroups';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import {
   Search,
   Plus,
@@ -87,212 +89,6 @@ export interface ProductGroupItem {
   variants?: ProductVariantItem[];
 }
 
-export const INITIAL_MASTER_PRODUCTS: ProductGroupItem[] = [
-  {
-    id: 'grp_ale_ale',
-    name: 'Ale-Ale',
-    category: 'FLAVORED',
-    brand: 'Ale-Ale',
-    hasVariants: true,
-    sellPriceRange: 'Rp 20.000',
-    totalStock: 73,
-    variants: [
-      { id: 'v_ale_1', sku: 'P001', name: 'Ale-Ale Orange Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 15, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_2', sku: 'P002', name: 'Ale-Ale Grape Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 12, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_3', sku: 'P003', name: 'Ale-Ale Apple Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 10, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_4', sku: 'P004', name: 'Ale-Ale Soursop Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 8, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_5', sku: 'P005', name: 'Ale-Ale Strawberry Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 11, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_6', sku: 'P006', name: 'Ale-Ale Tamarind Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 9, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ale_7', sku: 'P007', name: 'Ale-Ale Passion Fruit Cup (24 Cups)', category: 'FLAVORED', brand: 'Ale-Ale', costPrice: 17500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 8, itemsPerCarton: 24, weightMl: 200, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_aqua_dus',
-    name: 'Aqua Dus',
-    category: 'MINERAL',
-    brand: 'Aqua Dus',
-    hasVariants: true,
-    sellPriceRange: 'Rp 34.000 - Rp 52.500',
-    totalStock: 296,
-    variants: [
-      { id: 'v_aqd_1', sku: 'P010', name: 'Aqua Carton 240ml Cup (48 Cups)', category: 'MINERAL', brand: 'Aqua Dus', costPrice: 28000, sellPrice: 34000, posPrice: 34000, pwaPrice: 34000, stock: 120, itemsPerCarton: 48, weightMl: 240, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqd_2', sku: 'P011', name: 'Aqua Carton 330ml Mini (24 Bottles)', category: 'MINERAL', brand: 'Aqua Dus', costPrice: 33000, sellPrice: 39500, posPrice: 39500, pwaPrice: 39500, stock: 65, itemsPerCarton: 24, weightMl: 330, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqd_3', sku: 'P012', name: 'Aqua Carton 600ml Medium (24 Bottles)', category: 'MINERAL', brand: 'Aqua Dus', costPrice: 42000, sellPrice: 48000, posPrice: 48000, pwaPrice: 48000, stock: 80, itemsPerCarton: 24, weightMl: 600, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqd_4', sku: 'P013', name: 'Aqua Carton 1500ml Large (12 Bottles)', category: 'MINERAL', brand: 'Aqua Dus', costPrice: 46000, sellPrice: 52500, posPrice: 52500, pwaPrice: 52500, stock: 31, itemsPerCarton: 12, weightMl: 1500, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_aqua_galon',
-    name: 'Aqua Galon',
-    category: 'MINERAL',
-    brand: 'Aqua Galon',
-    hasVariants: true,
-    sellPriceRange: 'Rp 19.000 - Rp 75.000',
-    totalStock: 183,
-    variants: [
-      { id: 'v_aqg_1', sku: 'P014', name: 'Aqua Gallon 19L Refill (Return Bottle)', category: 'MINERAL', brand: 'Aqua Galon', costPrice: 16500, sellPrice: 19000, posPrice: 19000, pwaPrice: 19000, stock: 140, itemsPerCarton: 1, weightMl: 19000, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqg_2', sku: 'P015', name: 'Aqua Gallon 19L New Bottle + Water', category: 'MINERAL', brand: 'Aqua Galon', costPrice: 48000, sellPrice: 56000, posPrice: 56000, pwaPrice: 56000, stock: 28, itemsPerCarton: 1, weightMl: 19000, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqg_3', sku: 'P016', name: 'Aqua Gallon 19L Disposable Refill', category: 'MINERAL', brand: 'Aqua Galon', costPrice: 62000, sellPrice: 75000, posPrice: 75000, pwaPrice: 75000, stock: 15, itemsPerCarton: 1, weightMl: 19000, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_aquaviva',
-    name: 'Aquaviva',
-    category: 'MINERAL',
-    brand: 'Aquaviva',
-    hasVariants: true,
-    sellPriceRange: 'Rp 20.000 - Rp 26.000',
-    totalStock: 99,
-    variants: [
-      { id: 'v_aqv_1', sku: 'P020', name: 'Aquaviva Cup 220ml Carton (48 Cups)', category: 'MINERAL', brand: 'Aquaviva', costPrice: 16500, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 45, itemsPerCarton: 48, weightMl: 220, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqv_2', sku: 'P021', name: 'Aquaviva Bottle 600ml Carton (24 Bottles)', category: 'MINERAL', brand: 'Aquaviva', costPrice: 21000, sellPrice: 24500, posPrice: 24500, pwaPrice: 24500, stock: 34, itemsPerCarton: 24, weightMl: 600, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_aqv_3', sku: 'P022', name: 'Aquaviva Bottle 1500ml Carton (12 Bottles)', category: 'MINERAL', brand: 'Aquaviva', costPrice: 22500, sellPrice: 26000, posPrice: 26000, pwaPrice: 26000, stock: 20, itemsPerCarton: 12, weightMl: 1500, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_aspen_mineral',
-    name: 'Aspen Mineral',
-    category: 'MINERAL',
-    brand: 'Aspen Mineral',
-    hasVariants: true,
-    sellPriceRange: 'Rp 19.500 - Rp 23.000',
-    totalStock: 2,
-    variants: [
-      { id: 'v_asp_1', sku: 'P025', name: 'Aspen Cup 240ml Carton (48 Cups)', category: 'MINERAL', brand: 'Aspen Mineral', costPrice: 16000, sellPrice: 19500, posPrice: 19500, pwaPrice: 19500, stock: 1, itemsPerCarton: 48, weightMl: 240, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_asp_2', sku: 'P026', name: 'Aspen Bottle 330ml Carton (24 Bottles)', category: 'MINERAL', brand: 'Aspen Mineral', costPrice: 17500, sellPrice: 21000, posPrice: 21000, pwaPrice: 21000, stock: 0, itemsPerCarton: 24, weightMl: 330, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_asp_3', sku: 'P027', name: 'Aspen Bottle 600ml Carton (24 Bottles)', category: 'MINERAL', brand: 'Aspen Mineral', costPrice: 18000, sellPrice: 22000, posPrice: 22000, pwaPrice: 22000, stock: 1, itemsPerCarton: 24, weightMl: 600, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_asp_4', sku: 'P028', name: 'Aspen Bottle 1500ml Carton (12 Bottles)', category: 'MINERAL', brand: 'Aspen Mineral', costPrice: 19000, sellPrice: 23000, posPrice: 23000, pwaPrice: 23000, stock: 0, itemsPerCarton: 12, weightMl: 1500, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_asp_5', sku: 'P029', name: 'Aspen Gallon 19L Refill', category: 'MINERAL', brand: 'Aspen Mineral', costPrice: 17000, sellPrice: 20000, posPrice: 20000, pwaPrice: 20000, stock: 0, itemsPerCarton: 1, weightMl: 19000, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_coca_mini',
-    name: 'Coca Cola Mini 250ml',
-    category: 'COLA',
-    brand: 'Coca Cola',
-    hasVariants: true,
-    sellPriceRange: 'Rp 33.000',
-    totalStock: 6,
-    variants: [
-      { id: 'v_ccm_1', sku: 'P035', name: 'Coca Cola Mini Can 250ml (12 Cans)', category: 'COLA', brand: 'Coca Cola', costPrice: 28500, sellPrice: 33000, posPrice: 33000, pwaPrice: 33000, stock: 3, itemsPerCarton: 12, weightMl: 250, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ccm_2', sku: 'P036', name: 'Fanta Mini Can 250ml (12 Cans)', category: 'COLA', brand: 'Coca Cola', costPrice: 28500, sellPrice: 33000, posPrice: 33000, pwaPrice: 33000, stock: 2, itemsPerCarton: 12, weightMl: 250, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_ccm_3', sku: 'P037', name: 'Sprite Mini Can 250ml (12 Cans)', category: 'COLA', brand: 'Coca Cola', costPrice: 28500, sellPrice: 33000, posPrice: 33000, pwaPrice: 33000, stock: 1, itemsPerCarton: 12, weightMl: 250, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_coca_seru',
-    name: 'Coca Cola Seru 390ml',
-    sku: 'P040',
-    category: 'COLA',
-    brand: 'Coca Cola',
-    hasVariants: false,
-    costPrice: 26000,
-    sellPrice: 30000,
-    posPrice: 30000,
-    pwaPrice: 30000,
-    totalStock: 14,
-    itemsPerCarton: 12,
-    weightMl: 390,
-    isActive: true,
-    isPosVisible: true,
-    isPwaVisible: true,
-  },
-  {
-    id: 'grp_djinggo_esteler',
-    name: 'Djinggo Es Teler Carton',
-    sku: 'P050',
-    category: 'FLAVORED',
-    brand: 'Djinggo',
-    hasVariants: false,
-    costPrice: 17500,
-    sellPrice: 20000,
-    posPrice: 20000,
-    pwaPrice: 20000,
-    totalStock: 41,
-    itemsPerCarton: 24,
-    weightMl: 200,
-    isActive: true,
-    isPosVisible: true,
-    isPwaVisible: true,
-  },
-  {
-    id: 'grp_es_teler',
-    name: 'Es Teler Cup Carton',
-    sku: 'P046',
-    category: 'FLAVORED',
-    brand: 'Es Teler',
-    hasVariants: false,
-    costPrice: 18700,
-    sellPrice: 20000,
-    posPrice: 20000,
-    pwaPrice: 20000,
-    totalStock: 0,
-    itemsPerCarton: 24,
-    weightMl: 200,
-    isActive: true,
-    isPosVisible: true,
-    isPwaVisible: true,
-  },
-  {
-    id: 'grp_floridina',
-    name: 'Floridina',
-    category: 'FLAVORED',
-    brand: 'Floridina',
-    hasVariants: true,
-    sellPriceRange: 'Rp 30.000',
-    totalStock: 49,
-    variants: [
-      { id: 'v_flr_1', sku: 'P055', name: 'Floridina Orange Bottle 350ml Carton (12 Bottles)', category: 'FLAVORED', brand: 'Floridina', costPrice: 25000, sellPrice: 30000, posPrice: 30000, pwaPrice: 30000, stock: 27, itemsPerCarton: 12, weightMl: 350, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_flr_2', sku: 'P056', name: 'Floridina Coco Orange Bottle 350ml Carton (12 Bottles)', category: 'FLAVORED', brand: 'Floridina', costPrice: 25000, sellPrice: 30000, posPrice: 30000, pwaPrice: 30000, stock: 22, itemsPerCarton: 12, weightMl: 350, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_gas',
-    name: 'LPG Gas Cylinders',
-    category: 'GAS',
-    brand: 'Pertamina',
-    hasVariants: true,
-    costPriceRange: 'Rp 16.000 - Rp 215.000',
-    sellPriceRange: 'Rp 17.500 - Rp 240.000',
-    totalStock: 46,
-    variants: [
-      { id: 'v_gas_1', sku: 'P060', name: 'Gas LPG 3 Kg Melon Refill', category: 'GAS', brand: 'Pertamina', costPrice: 16000, sellPrice: 17500, posPrice: 17500, pwaPrice: 17500, stock: 36, itemsPerCarton: 1, weightMl: 3000, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_gas_2', sku: 'P061', name: 'Gas Bright Gas 12 Kg Cylinder Refill', category: 'GAS', brand: 'Pertamina', costPrice: 215000, sellPrice: 240000, posPrice: 240000, pwaPrice: 240000, stock: 10, itemsPerCarton: 1, weightMl: 12000, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-  {
-    id: 'grp_golda',
-    name: 'Golda Coffee Bottle Carton',
-    sku: 'P031',
-    category: 'COFFEE',
-    brand: 'Golda Coffee',
-    hasVariants: false,
-    costPrice: 33579,
-    sellPrice: 36000,
-    posPrice: 36000,
-    pwaPrice: 36000,
-    totalStock: 24,
-    itemsPerCarton: 12,
-    weightMl: 200,
-    isActive: true,
-    isPosVisible: true,
-    isPwaVisible: true,
-  },
-  {
-    id: 'grp_good_day',
-    name: 'Good Day Coffee',
-    category: 'COFFEE',
-    brand: 'Good Day',
-    hasVariants: true,
-    sellPriceRange: 'Rp 5.500 - Rp 120.000',
-    totalStock: 0,
-    variants: [
-      { id: 'v_gdy_1', sku: 'P065', name: 'Good Day Cappuccino Strip (10 Sachets)', category: 'COFFEE', brand: 'Good Day', costPrice: 4500, sellPrice: 5500, posPrice: 5500, pwaPrice: 5500, stock: 0, itemsPerCarton: 10, weightMl: 25, isActive: true, isPosVisible: true, isPwaVisible: true },
-      { id: 'v_gdy_2', sku: 'P066', name: 'Good Day Mocacinno Carton (24 Cans)', category: 'COFFEE', brand: 'Good Day', costPrice: 105000, sellPrice: 120000, posPrice: 120000, pwaPrice: 120000, stock: 0, itemsPerCarton: 24, weightMl: 250, isActive: true, isPosVisible: true, isPwaVisible: true },
-    ],
-  },
-];
-
 export interface ProductCartonManagerProps {
   initialSubTab?: ProductCartonTabType;
   initialViewMode?: 'table' | 'add_product';
@@ -305,7 +101,8 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   const [activeTab, setActiveTab] = useState<ProductCartonTabType>(
     initialSubTab || 'list'
   );
-  const [products, setProducts] = useState<ProductGroupItem[]>(INITIAL_MASTER_PRODUCTS);
+  // Satu sumber data: koleksi Firestore `products` (sama dengan yang dipakai POS dan PWA)
+  const [products, setProducts] = useProductGroups();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
@@ -350,12 +147,12 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
 
   // Dynamic Inbound and Outbound Records
-  const [stockInRecords, setStockInRecords] = useState([
+  const [stockInRecords, setStockInRecords] = useFirestoreList('stock_in', [
     { id: 'DO-202610-091', date: '09/10/2026 10:15', product: 'Aqua Carton 240ml Cup', qty: 50, supplier: 'PT Tirta Distribusi Jaya', status: 'Recorded' },
     { id: 'DO-202610-088', date: '08/10/2026 14:30', product: 'LPG Gas 3 Kg Melon', qty: 40, supplier: 'Agen Gas Pertamina Mitra', status: 'Recorded' },
   ]);
 
-  const [stockOutRecords, setStockOutRecords] = useState([
+  const [stockOutRecords, setStockOutRecords] = useFirestoreList('stock_out', [
     { id: 'OUT-202610-044', date: '09/10/2026 12:40', product: 'Aqua Gallon 19L Refill', qty: 12, dest: 'Store POS Sales', status: 'Dispensed' },
     { id: 'OUT-202610-041', date: '09/10/2026 09:15', product: 'Floridina Orange 350ml Carton', qty: 5, dest: 'PWA Client Wholesale', status: 'Dispensed' },
   ]);
@@ -382,7 +179,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   });
 
   // Simulator & Package Filter State
-  const [simProductSku, setSimProductSku] = useState<string>('P031');
+  const [simProductSku, setSimProductSku] = useState<string>('');
   const [simQty, setSimQty] = useState<number>(2);
   const [simUnitType, setSimUnitType] = useState<'carton' | 'unit'>('carton');
   const [simCustomerType, setSimCustomerType] = useState<'regular' | 'pwa_member'>('pwa_member');
@@ -593,11 +390,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
 
   // Refresh
   const handleRefresh = () => {
-    showToast('Refreshing product catalog...');
-    setTimeout(() => {
-      setProducts(INITIAL_MASTER_PRODUCTS);
-      showToast('Product catalog synchronized!');
-    }, 500);
+    showToast('Katalog tersinkron realtime dengan Firestore.');
   };
 
   // Filtering
@@ -2112,12 +1905,12 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             {(() => {
               const selectedP = products.find((p) => p.sku === simProductSku) || products[0];
               const v = selectedP?.variants?.[0] || {
-                costPrice: 20000,
-                sellPrice: 25000,
-                itemsPerCarton: 24,
+                costPrice: selectedP?.costPrice ?? 0,
+                sellPrice: selectedP?.sellPrice ?? 0,
+                itemsPerCarton: selectedP?.itemsPerCarton ?? 1,
               };
 
-              const itemsInCarton = v.itemsPerCarton || 24;
+              const itemsInCarton = v.itemsPerCarton || 1;
               const unitPrice = v.sellPrice;
               const regularTotal =
                 simUnitType === 'carton' ? unitPrice * itemsInCarton * simQty : unitPrice * simQty;

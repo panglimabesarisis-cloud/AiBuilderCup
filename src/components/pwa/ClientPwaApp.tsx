@@ -1,4 +1,5 @@
 import { assessOrder, writeFraudLog } from '../../services/fraudService';
+import { doc as fsDoc, getDoc as fsGetDoc, setDoc as fsSetDoc } from 'firebase/firestore';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   collection,
@@ -625,6 +626,26 @@ export const ClientPwaApp: React.FC = () => {
     } catch (e) {
       setFormFeedbackMessage('Server tidak terjangkau. Coba lagi.');
       return;
+    }
+
+    // Simpan member terverifikasi ke Firestore (muncul di modul Pelanggan admin)
+    try {
+      const digits = member.phone.replace(/\D/g, '');
+      const ref = fsDoc(db, 'customers', `pwa_${digits}`);
+      const nowIso = new Date().toISOString();
+      const existing = await fsGetDoc(ref);
+      if (existing.exists()) {
+        await fsSetDoc(ref, { name: member.name, phone: member.phone, phoneVerified: true, verifiedAt: nowIso, latitude: member.latitude, longitude: member.longitude }, { merge: true });
+      } else {
+        await fsSetDoc(ref, {
+          id: `pwa_${digits}`, storeId: DEMO_STORE_ID, name: member.name, phone: member.phone, email: '', address: '',
+          type: 'Member PWA', creditLimit: 0, points: 0, debtAmount: 0, debtAgeDays: 0, subscriptionPlan: '-',
+          totalSpent: 0, lastTransactionDate: '-', status: 'active', phoneVerified: true, verifiedAt: nowIso,
+          latitude: member.latitude, longitude: member.longitude, createdAt: nowIso,
+        });
+      }
+    } catch (e) {
+      console.warn('Gagal menyimpan member ke Firestore:', e);
     }
 
     confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });

@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   Truck,
@@ -40,7 +41,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Suppliers Data
-  const [suppliers, setSuppliers] = useState([
+  const [suppliers, setSuppliers] = useFirestoreList('suppliers', [
     {
       id: 'sup_1',
       name: 'PT Indofood CBP Sukses Makmur Tbk',
@@ -96,7 +97,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
   ]);
 
   // Purchase Orders (Daftar Pembelian)
-  const [orders, setOrders] = useState([
+  const [orders, setOrders] = useFirestoreList('purchase_orders', [
     {
       id: 'PO-202610-001',
       date: '08 Okt 2026',
@@ -130,7 +131,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
   ]);
 
   // Request Pembelian (PR - Purchase Requisition)
-  const [purchaseRequests, setPurchaseRequests] = useState([
+  const [purchaseRequests, setPurchaseRequests] = useFirestoreList('purchase_requests', [
     {
       id: 'PR-202610-101',
       date: '10 Okt 2026, 08:30 WIB',

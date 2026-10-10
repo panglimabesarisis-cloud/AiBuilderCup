@@ -42,6 +42,12 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { AdminAreaCharts } from './AdminAreaCharts';
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { DEMO_STORE_ID } from '../../services/dataSeeder';
+import { deductStockForOrder } from '../../services/stockService';
+import { formatIDR } from '../../lib/money';
+import { Product, Transaction } from '../../types';
 
 interface AdminDashboardProps {
   onNavigateTab: (tab: string) => void;
@@ -84,16 +90,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [currentTime, setCurrentTime] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Toggle between clean empty state (matching screenshot) and live active simulation data
-  const [dataMode, setDataMode] = useState<'screenshot_empty' | 'live_demo'>('screenshot_empty');
-
   // Orders tab filter
   const [orderFilterTab, setOrderFilterTab] = useState<'all' | 'menunggu' | 'diproses' | 'siap' | 'selesai'>('all');
 
   // Active modals
   const [selectedReceipt, setSelectedReceipt] = useState<TransactionItem | null>(null);
   const [showShiftModal, setShowShiftModal] = useState<boolean>(false);
-  const [showNewOrderModal, setShowNewOrderModal] = useState<boolean>(false);
   const [flashMsg, setFlashMsg] = useState<string | null>(null);
 
   const showFlash = (msg: string) => {
@@ -132,145 +134,163 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }, 600);
   };
 
-  // Sample incoming orders for demo mode
-  const [ordersList, setOrdersList] = useState<OrderItem[]>([
-    {
-      id: 'ORD-101',
-      orderNumber: '#PO-202610-01',
-      customerName: 'Bambang Sudiro',
-      channel: 'PWA Online',
-      itemsCount: 4,
-      totalAmount: 185000,
-      paymentMethod: 'QRIS',
-      paymentStatus: 'Lunas',
-      orderStatus: 'menunggu',
-      time: '16:28 WIB',
-    },
-    {
-      id: 'ORD-102',
-      orderNumber: '#PO-202610-02',
-      customerName: 'Restoran Berkah',
-      channel: 'PWA Online',
-      itemsCount: 12,
-      totalAmount: 940000,
-      paymentMethod: 'Transfer BCA',
-      paymentStatus: 'Lunas',
-      orderStatus: 'diproses',
-      time: '15:50 WIB',
-    },
-    {
-      id: 'ORD-103',
-      orderNumber: '#PO-202610-03',
-      customerName: 'Ibu Ratna',
-      channel: 'Kasir POS',
-      itemsCount: 3,
-      totalAmount: 75000,
-      paymentMethod: 'Tunai',
-      paymentStatus: 'Lunas',
-      orderStatus: 'siap',
-      time: '15:15 WIB',
-    },
-  ]);
+  // ───────── Data nyata dari Firestore (tanpa data contoh) ─────────
+  const [txs, setTxs] = useState<Transaction[]>([]);
+  const [prods, setProds] = useState<Product[]>([]);
+  const [custDocs, setCustDocs] = useState<any[]>([]);
+  const [poDocs, setPoDocs] = useState<any[]>([]);
+  const [cashInDocs, setCashInDocs] = useState<any[]>([]);
+  const [cashOutDocs, setCashOutDocs] = useState<any[]>([]);
 
-  // Hourly sales chart mock data
-  const hourlyData = [
-    { hour: '08:00', amount: dataMode === 'screenshot_empty' ? 0 : 450000, tx: dataMode === 'screenshot_empty' ? 0 : 5 },
-    { hour: '10:00', amount: dataMode === 'screenshot_empty' ? 0 : 1200000, tx: dataMode === 'screenshot_empty' ? 0 : 14 },
-    { hour: '12:00', amount: dataMode === 'screenshot_empty' ? 0 : 2850000, tx: dataMode === 'screenshot_empty' ? 0 : 28 },
-    { hour: '14:00', amount: dataMode === 'screenshot_empty' ? 0 : 2100000, tx: dataMode === 'screenshot_empty' ? 0 : 22 },
-    { hour: '16:00', amount: dataMode === 'screenshot_empty' ? 0 : 3400000, tx: dataMode === 'screenshot_empty' ? 0 : 35 },
-    { hour: '18:00', amount: dataMode === 'screenshot_empty' ? 0 : 3150000, tx: dataMode === 'screenshot_empty' ? 0 : 30 },
-    { hour: '20:00', amount: dataMode === 'screenshot_empty' ? 0 : 1700000, tx: dataMode === 'screenshot_empty' ? 0 : 18 },
-  ];
+  useEffect(() => {
+    const warn = (n: string) => (e: unknown) => console.warn(`[dashboard:${n}]`, e);
+    const byStore = (name: string) => query(collection(db, name), where('storeId', '==', DEMO_STORE_ID));
+    const rows = (s: any) => s.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const unsubs = [
+      onSnapshot(query(collection(db, 'transactions'), orderBy('createdAt', 'desc'), limit(500)), (s) => setTxs(rows(s)), warn('transactions')),
+      onSnapshot(collection(db, 'products'), (s) => setProds(rows(s)), warn('products')),
+      onSnapshot(byStore('customers'), (s) => setCustDocs(rows(s)), warn('customers')),
+      onSnapshot(byStore('purchase_orders'), (s) => setPoDocs(rows(s)), warn('purchase_orders')),
+      onSnapshot(byStore('cash_in'), (s) => setCashInDocs(rows(s)), warn('cash_in')),
+      onSnapshot(byStore('cash_out'), (s) => setCashOutDocs(rows(s)), warn('cash_out')),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, []);
+
+  const DAY = 86400000;
+  const now = new Date();
+  const sod = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let rStart = sod;
+  let rEnd = new Date(now.getTime() + 1);
+  if (timeRange === 'yesterday') { rStart = new Date(sod.getTime() - DAY); rEnd = sod; }
+  else if (timeRange === '7days') rStart = new Date(sod.getTime() - 6 * DAY);
+  else if (timeRange === 'month') rStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  else if (timeRange === 'custom') rStart = new Date(sod.getTime() - 29 * DAY);
+  const span = rEnd.getTime() - rStart.getTime();
+  const pStart = new Date(rStart.getTime() - span);
+  const inWindow = (t: Transaction, a: Date, b: Date) => {
+    const ts = new Date(t.createdAt).getTime();
+    return ts >= a.getTime() && ts < b.getTime();
+  };
+  const cur = txs.filter((t) => t.status === 'completed' && inWindow(t, rStart, rEnd));
+  const prev = txs.filter((t) => t.status === 'completed' && inWindow(t, pStart, rStart));
+  const sum = (arr: Transaction[], k: 'totalAmount' | 'totalCost') => arr.reduce((a, t) => a + (Number(t[k]) || 0), 0);
+  const revenue = sum(cur, 'totalAmount');
+  const prevRevenue = sum(prev, 'totalAmount');
+  const txCount = cur.length;
+  const grossProfit = revenue - sum(cur, 'totalCost');
+  const marginPct = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+  const revDeltaPct = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : null;
+  const cashSales = cur.filter((t) => t.paymentMethod === 'cash').reduce((a, t) => a + (t.totalAmount || 0), 0);
+  const nonCashSales = revenue - cashSales;
+  const kasMasuk = cashInDocs.reduce((a, c) => a + (Number(c.amount) || 0), 0);
+  const kasKeluar = cashOutDocs.reduce((a, c) => a + (Number(c.amount) || 0), 0);
+  const kasFisik = kasMasuk - kasKeluar + cashSales;
+  const debtTotal = custDocs.reduce((a, c) => a + (Number(c.debtAmount) || 0), 0);
+  const debtCount = custDocs.filter((c) => Number(c.debtAmount) > 0).length;
+  const supplierDue = poDocs
+    .filter((o) => /tempo|belum/i.test(String(o.paymentStatus || '')))
+    .reduce((a, o) => a + (Number(o.totalAmount) || 0), 0);
+  const riskyCount = txs.filter((t) => inWindow(t, rStart, rEnd) && Number(t.fraudScore) >= 45).length;
+
+  const METHOD_LABEL: Record<string, string> = { cash: 'Tunai', qris: 'QRIS', card: 'Debit BCA', bank_transfer: 'Transfer', debt: 'Hutang', cod: 'COD' };
+  const methodCounts = cur.reduce<Record<string, number>>((m, t) => {
+    m[t.paymentMethod] = (m[t.paymentMethod] || 0) + 1;
+    return m;
+  }, {});
+  const favMethodKey = Object.keys(methodCounts).sort((a, b) => methodCounts[b] - methodCounts[a])[0];
+  const favMethodText = favMethodKey
+    ? `${METHOD_LABEL[favMethodKey] || favMethodKey} (${Math.round((methodCounts[favMethodKey] / cur.length) * 100)}% transaksi)`
+    : 'Belum ada transaksi';
+
+  const hourlyData = [8, 10, 12, 14, 16, 18, 20].map((h) => {
+    const bucket = cur.filter((t) => {
+      const hr = new Date(t.createdAt).getHours();
+      return (h === 8 ? hr < 10 : h === 20 ? hr >= 20 : hr >= h && hr < h + 2);
+    });
+    return { hour: `${String(h).padStart(2, '0')}:00`, amount: sum(bucket, 'totalAmount'), tx: bucket.length };
+  });
   const maxHourAmount = Math.max(...hourlyData.map((d) => d.amount), 1);
+  const peak = [...hourlyData].sort((a, b) => b.amount - a.amount)[0];
+  const peakText = peak && peak.amount > 0 ? `${peak.hour} WIB (${formatIDR(peak.amount)})` : 'Menunggu data transaksi';
 
-  // Top products list
-  const topProducts = [
-    { name: 'Aqua Gallon 19L Refill', category: 'MINERAL', sold: dataMode === 'screenshot_empty' ? 0 : 42, rev: dataMode === 'screenshot_empty' ? 0 : 882000, stock: 58, minStock: 20 },
-    { name: 'Le Minerale 600ml Botol (Dus)', category: 'MINERAL', sold: dataMode === 'screenshot_empty' ? 0 : 68, rev: dataMode === 'screenshot_empty' ? 0 : 340000, stock: 124, minStock: 30 },
-    { name: 'Gas LPG 3 Kg Melon', category: 'GAS', sold: dataMode === 'screenshot_empty' ? 0 : 26, rev: dataMode === 'screenshot_empty' ? 0 : 572000, stock: 8, minStock: 15 },
-    { name: 'Teh Pucuk Harum 350ml Dus', category: 'FLAVORED', sold: dataMode === 'screenshot_empty' ? 0 : 16, rev: dataMode === 'screenshot_empty' ? 0 : 960000, stock: 24, minStock: 20 },
-    { name: 'Indomie Goreng Spesial Dus', category: 'INSTANT_FOOD', sold: dataMode === 'screenshot_empty' ? 0 : 14, rev: dataMode === 'screenshot_empty' ? 0 : 1750000, stock: 4, minStock: 15 },
-  ];
+  const topProducts = (() => {
+    const agg = new Map<string, { name: string; productId?: string; sold: number; rev: number }>();
+    cur.forEach((t) =>
+      (t.items || []).forEach((it: any) => {
+        const k = it.productId || it.productName;
+        const u = agg.get(k) || { name: it.productName, productId: it.productId, sold: 0, rev: 0 };
+        u.sold += Number(it.quantityOrdered) || 0;
+        u.rev += Number(it.subtotal) || 0;
+        agg.set(k, u);
+      })
+    );
+    return [...agg.values()]
+      .sort((a, b) => b.rev - a.rev)
+      .slice(0, 5)
+      .map((u) => {
+        const p = prods.find((x) => x.id === u.productId);
+        return { name: u.name, category: String(p?.category || '-').toUpperCase(), sold: u.sold, rev: u.rev, stock: p?.stockInUnits ?? 0, minStock: p?.minStockAlert ?? 0 };
+      });
+  })();
 
-  // Critical stock items
-  const criticalStockItems = [
-    { name: 'Indomie Goreng Spesial Dus', currentStock: 4, minStock: 15, unit: 'Dus', severity: 'danger' },
-    { name: 'Gas LPG 3 Kg Melon', currentStock: 8, minStock: 15, unit: 'Tabung', severity: 'warning' },
-    { name: 'Minyak Goreng Sania 2L', currentStock: 6, minStock: 20, unit: 'Pouch', severity: 'warning' },
-  ];
+  const criticalStockItems = prods
+    .filter((p) => Number(p.stockInUnits) <= Number(p.minStockAlert ?? 0))
+    .sort((a, b) => a.stockInUnits / (a.minStockAlert || 1) - b.stockInUnits / (b.minStockAlert || 1))
+    .slice(0, 8)
+    .map((p) => ({
+      name: p.name,
+      currentStock: p.stockInUnits,
+      minStock: p.minStockAlert,
+      unit: 'Unit',
+      severity: p.stockInUnits <= (p.minStockAlert || 0) / 2 ? 'danger' : 'warning',
+    }));
 
-  // Recent transactions table
-  const recentTransactions: TransactionItem[] = [
-    {
-      id: 'TRX-098',
-      receiptNumber: 'RC-202610-098',
-      time: '16:42 WIB',
-      date: '10 Okt 2026',
-      cashier: 'Ahmad Fauzi (Kasir 1)',
-      customer: 'Umum (Pelanggan Tunai)',
-      method: 'QRIS',
-      itemsSummary: 'Aqua Gallon (2), Teh Pucuk (3)',
-      total: 128500,
-      status: 'Berhasil',
-    },
-    {
-      id: 'TRX-097',
-      receiptNumber: 'RC-202610-097',
-      time: '16:38 WIB',
-      date: '10 Okt 2026',
-      cashier: 'Siti Rahma (Kasir 2)',
-      customer: 'Pak Hendra (Warung)',
-      method: 'Tunai',
-      itemsSummary: 'Gas LPG 3Kg (2)',
-      total: 44000,
-      status: 'Berhasil',
-    },
-    {
-      id: 'TRX-096',
-      receiptNumber: 'RC-202610-096',
-      time: '16:31 WIB',
-      date: '10 Okt 2026',
-      cashier: 'Ahmad Fauzi (Kasir 1)',
-      customer: 'Bu Maya',
-      method: 'Debit BCA',
-      itemsSummary: 'Indomie Dus (2), Minyak 2L (2)',
-      total: 320000,
-      status: 'Berhasil',
-    },
-    {
-      id: 'TRX-095',
-      receiptNumber: 'RC-202610-095',
-      time: '16:20 WIB',
-      date: '10 Okt 2026',
-      cashier: 'PWA Web Online',
-      customer: 'Kantin Sekolah Berkah',
-      method: 'QRIS',
-      itemsSummary: 'Le Minerale Dus (5), Aqua Dus (5)',
-      total: 540000,
-      status: 'Berhasil',
-    },
-    {
-      id: 'TRX-094',
-      receiptNumber: 'RC-202610-094',
-      time: '16:12 WIB',
-      date: '10 Okt 2026',
-      cashier: 'Siti Rahma (Kasir 2)',
-      customer: 'Umum',
-      method: 'Tunai',
-      itemsSummary: 'Rokok Surya 16 (1), Kopi ABC (2)',
-      total: 72000,
-      status: 'Berhasil',
-    },
-  ];
+  const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':') + ' WIB';
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  const itemsSummary = (t: Transaction) =>
+    (t.items || []).slice(0, 3).map((i: any) => `${i.productName} (${i.quantityOrdered})`).join(', ') || '-';
+
+  const recentTransactions: TransactionItem[] = txs.slice(0, 30).map((t) => ({
+    id: t.id,
+    receiptNumber: `RC-${t.id.slice(-6).toUpperCase()}`,
+    time: fmtTime(t.createdAt),
+    date: fmtDate(t.createdAt),
+    cashier: t.channel === 'pos' ? t.cashierId || 'Kasir' : 'PWA Online',
+    customer: t.customerName || 'Umum',
+    method: (t.paymentMethod === 'cash' ? 'Tunai' : t.paymentMethod === 'qris' ? 'QRIS' : t.paymentMethod === 'card' ? 'Debit BCA' : 'Transfer') as TransactionItem['method'],
+    itemsSummary: itemsSummary(t),
+    total: t.totalAmount || 0,
+    status: (t.status === 'completed' ? 'Berhasil' : t.status === 'rejected' ? 'Dibatalkan' : 'Menunggu') as TransactionItem['status'],
+  }));
+
+  const ordersList: OrderItem[] = txs
+    .filter((t) => t.status !== 'rejected')
+    .slice(0, 30)
+    .map((t) => ({
+      id: t.id,
+      orderNumber: `#${t.id.slice(-6).toUpperCase()}`,
+      customerName: t.customerName || 'Umum',
+      channel: (t.channel === 'pos' ? 'Kasir POS' : 'PWA Online') as OrderItem['channel'],
+      itemsCount: (t.items || []).reduce((a: number, i: any) => a + (Number(i.quantityOrdered) || 0), 0),
+      totalAmount: t.totalAmount || 0,
+      paymentMethod: (t.paymentMethod === 'cash' ? 'Tunai' : t.paymentMethod === 'qris' ? 'QRIS' : 'Transfer BCA') as OrderItem['paymentMethod'],
+      paymentStatus: (t.status === 'completed' ? 'Lunas' : 'Belum Bayar') as OrderItem['paymentStatus'],
+      orderStatus: (t.status === 'completed' || t.fulfillmentStatus === 'completed'
+        ? 'selesai'
+        : t.fulfillmentStatus === 'ready'
+        ? 'siap'
+        : t.fulfillmentStatus === 'processing'
+        ? 'diproses'
+        : 'menunggu') as OrderItem['orderStatus'],
+      time: fmtTime(t.createdAt),
+    }));
+
+  const lastPos = txs.find((t) => t.channel === 'pos');
+  const firstPosToday = [...txs].reverse().find((t) => t.channel === 'pos' && inWindow(t, sod, new Date(now.getTime() + 1)));
 
   // Filtered orders according to mode and tab
-  const displayedOrders = dataMode === 'screenshot_empty'
-    ? []
-    : ordersList.filter((o) => {
-        if (orderFilterTab === 'all') return true;
-        return o.orderStatus === orderFilterTab;
-      });
+  const displayedOrders = ordersList.filter((o) => orderFilterTab === 'all' || o.orderStatus === orderFilterTab);
 
   // Filtered transactions for search
   const displayedTransactions = recentTransactions.filter((tx) => {
@@ -284,10 +304,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
   });
 
-  const updateOrderStatus = (orderId: string, nextStatus: 'diproses' | 'siap' | 'selesai') => {
-    setOrdersList((prev) =>
-      prev.map((ord) => (ord.id === orderId ? { ...ord, orderStatus: nextStatus } : ord))
-    );
+  const updateOrderStatus = async (orderId: string, nextStatus: 'diproses' | 'siap' | 'selesai') => {
+    try {
+      const t = txs.find((x) => x.id === orderId);
+      if (nextStatus === 'selesai') {
+        if (t && t.status !== 'completed') {
+          await deductStockForOrder(
+            orderId,
+            (t.items || []).map((it: any) => ({ productId: it.productId, units: Number(it.unitsDeducted) || 0 }))
+          );
+        }
+        await updateDoc(doc(db, 'transactions', orderId), {
+          fulfillmentStatus: 'completed',
+          status: 'completed',
+          reviewedBy: 'Admin Dashboard',
+          reviewedAt: new Date().toISOString(),
+        });
+      } else {
+        await updateDoc(doc(db, 'transactions', orderId), {
+          fulfillmentStatus: nextStatus === 'diproses' ? 'processing' : 'ready',
+        });
+      }
+    } catch (e) {
+      showFlash(e instanceof Error ? e.message : 'Gagal memperbarui pesanan.');
+    }
   };
 
   return (
@@ -402,34 +442,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
-            {/* Quick Toggle View Mode (Screenshot Fresh / Live Simulated) */}
-            <div className="flex items-center p-0.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
-              <button
-                onClick={() => setDataMode('screenshot_empty')}
-                title="Tampilkan kondisi default seperti pada tangkapan layar (Belum ada order, saldo awal, dll.)"
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-                  dataMode === 'screenshot_empty'
-                    ? 'bg-zinc-800 text-emerald-400 border border-emerald-500/30'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Mode Screenshot
-              </button>
-              <button
-                onClick={() => setDataMode('live_demo')}
-                title="Tampilkan data simulasi transaksi, omset, dan pesanan aktif"
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-                  dataMode === 'live_demo'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <Sparkles className="w-3 h-3 text-amber-300" />
-                Simulasi Live
-              </button>
-            </div>
-
             {/* Refresh button */}
             <button
               onClick={handleRefresh}
@@ -481,17 +493,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            {dataMode === 'screenshot_empty' ? 'Rp 0' : 'Rp 14.850.000'}
+            {formatIDR(revenue)}
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
-            {dataMode === 'screenshot_empty' ? (
-              <span className="text-zinc-500">0% dibanding kemarin</span>
+            {revDeltaPct === null ? (
+              <span className="text-zinc-500">Belum ada pembanding periode lalu</span>
             ) : (
               <>
-                <span className="flex items-center text-emerald-400 font-bold bg-emerald-500/10 px-1 py-0.2 rounded">
-                  <ArrowUpRight className="w-3 h-3" /> +18.4%
+                <span className={`flex items-center font-bold px-1 py-0.2 rounded ${revDeltaPct >= 0 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'}`}>
+                  {revDeltaPct >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />} {revDeltaPct >= 0 ? '+' : ''}{revDeltaPct.toFixed(1)}%
                 </span>
-                <span className="text-zinc-500">vs kemarin</span>
+                <span className="text-zinc-500">vs periode sebelumnya</span>
               </>
             )}
           </div>
@@ -509,14 +521,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            {dataMode === 'screenshot_empty' ? '0 Transaksi' : '142 Struk'}
+            {txCount} Transaksi
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
-            {dataMode === 'screenshot_empty' ? (
-              <span className="text-zinc-500">Rata-rata: Rp 0 / struk</span>
-            ) : (
-              <span className="text-blue-400 font-bold">Rata-rata Rp 104.577 / struk</span>
-            )}
+            <span className={txCount > 0 ? 'text-blue-400 font-bold' : 'text-zinc-500'}>Rata-rata {formatIDR(txCount > 0 ? revenue / txCount : 0)} / struk</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 opacity-60" />
         </div>
@@ -532,16 +540,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            {dataMode === 'screenshot_empty' ? 'Rp 0' : 'Rp 3.920.000'}
+            {formatIDR(grossProfit)}
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
-            {dataMode === 'screenshot_empty' ? (
-              <span className="text-zinc-500">Margin: 0%</span>
-            ) : (
-              <span className="text-indigo-400 font-bold bg-indigo-500/10 px-1 py-0.2 rounded">
-                Margin 26.4%
-              </span>
-            )}
+            <span className={revenue > 0 ? 'text-indigo-400 font-bold bg-indigo-500/10 px-1 py-0.2 rounded' : 'text-zinc-500'}>Margin {marginPct.toFixed(1)}%</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 opacity-60" />
         </div>
@@ -557,10 +559,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            Rp 0
+            {formatIDR(debtTotal)}
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
-            <span className="text-zinc-500">0 Tagihan Tertunda</span>
+            <span className="text-zinc-500">{debtCount} Tagihan Tertunda</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-yellow-500 opacity-60" />
         </div>
@@ -576,7 +578,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            Rp 0
+            {formatIDR(supplierDue)}
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
             <span className="text-zinc-500">Belum Terbayarkan</span>
@@ -595,10 +597,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-black text-white tracking-tight">
-            {dataMode === 'screenshot_empty' ? 'Rp 500.000' : 'Rp 2.150.000'}
+            {formatIDR(kasFisik)}
           </div>
           <div className="flex items-center gap-1.5 mt-2 text-[11px]">
-            <span className="text-teal-400 font-semibold">Modal Awal: Rp 500.000</span>
+            <span className="text-teal-400 font-semibold">Kas masuk {formatIDR(kasMasuk)} / keluar {formatIDR(kasKeluar)}</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-500 opacity-60" />
         </div>
@@ -606,7 +608,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* PUSAT ANALITIK AREA CHARTS: PENJUALAN, ASSET PRODUK, PEMBELIAN, STOK VS PENJUALAN VS PEMBELIAN */}
       <AdminAreaCharts
-        dataMode={dataMode}
+        transactions={txs}
+        products={prods}
+        purchaseOrders={poDocs}
         onNavigateTab={onNavigateTab}
         onOpenAddProduct={onOpenAddProduct}
       />
@@ -694,7 +698,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <button
-                    onClick={() => setShowNewOrderModal(true)}
+                    onClick={() => onNavigateTab('pos_machine')}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/20 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -706,12 +710,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   >
                     <Store className="w-3.5 h-3.5" />
                     <span>Buka Kasir POS</span>
-                  </button>
-                  <button
-                    onClick={() => setDataMode('live_demo')}
-                    className="text-xs text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-4 cursor-pointer"
-                  >
-                    Muat Contoh Pesanan Aktif
                   </button>
                 </div>
               </div>
@@ -828,18 +826,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800">
                 <span className="text-zinc-500 block text-[11px]">Jam Puncak Teramai</span>
                 <span className="font-bold text-white">
-                  {dataMode === 'screenshot_empty' ? 'Menunggu data transaksi' : '16:00 WIB (Rp 3,4 Jt)'}
+                  {peakText}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800">
                 <span className="text-zinc-500 block text-[11px]">Metode Favorit</span>
                 <span className="font-bold text-white">
-                  {dataMode === 'screenshot_empty' ? 'QRIS & Tunai' : 'QRIS (64% Transaksi)'}
+                  {favMethodText}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800">
-                <span className="text-zinc-500 block text-[11px]">Kepatuhan Laci Kas</span>
-                <span className="font-bold text-emerald-400">100% Selaras Realtime</span>
+                <span className="text-zinc-500 block text-[11px]">Transaksi Berisiko (skor 45+)</span>
+                <span className={`font-bold ${riskyCount > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{riskyCount} transaksi</span>
               </div>
             </div>
           </div>
@@ -881,34 +879,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
                 <div>
                   <span className="text-zinc-400 block text-[11px]">Kasir Bertugas:</span>
-                  <span className="font-bold text-white">Ahmad Fauzi (ID: KSR-01)</span>
+                  <span className="font-bold text-white">{lastPos?.cashierId || 'Belum ada transaksi kasir'}</span>
                 </div>
                 <span className="text-[10px] bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded font-mono">
-                  Mulai 08:00 WIB
+                  {firstPosToday ? `Mulai ${fmtTime(firstPosToday.createdAt)}` : 'Belum mulai'}
                 </span>
               </div>
 
               <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
                 <div className="flex justify-between items-center text-zinc-400">
-                  <span>Modal Awal Kas:</span>
-                  <span className="font-mono font-bold text-zinc-200">Rp 500.000</span>
+                  <span>Kas Masuk Manual:</span>
+                  <span className="font-mono font-bold text-zinc-200">{formatIDR(kasMasuk)}</span>
                 </div>
                 <div className="flex justify-between items-center text-zinc-400">
                   <span>Penjualan Tunai:</span>
                   <span className="font-mono font-bold text-emerald-400">
-                    {dataMode === 'screenshot_empty' ? 'Rp 0' : 'Rp 1.650.000'}
+                    {formatIDR(cashSales)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-zinc-400">
                   <span>Penjualan Non-Tunai / QRIS:</span>
                   <span className="font-mono font-bold text-blue-400">
-                    {dataMode === 'screenshot_empty' ? 'Rp 0' : 'Rp 13.200.000'}
+                    {formatIDR(nonCashSales)}
                   </span>
                 </div>
                 <div className="pt-2 border-t border-zinc-800/80 flex justify-between items-center">
                   <span className="font-bold text-white">Kas Fisik di Laci:</span>
                   <span className="font-mono font-black text-white text-sm">
-                    {dataMode === 'screenshot_empty' ? 'Rp 500.000' : 'Rp 2.150.000'}
+                    {formatIDR(kasFisik)}
                   </span>
                 </div>
               </div>
@@ -1028,7 +1026,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </h3>
             <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
               <button
-                onClick={() => setShowNewOrderModal(true)}
+                onClick={() => onNavigateTab('pos_machine')}
                 className="p-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center group"
               >
                 <Plus className="w-4 h-4 text-blue-400 group-hover:scale-110 transition" />
@@ -1375,73 +1373,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {/* MODAL 3: TAMBAH PESANAN CEPAT */}
-      {showNewOrderModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Plus className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold text-white text-base">Buat Pesanan Manual</h3>
-              </div>
-              <button
-                onClick={() => setShowNewOrderModal(false)}
-                className="p-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="text-zinc-400 font-semibold block mb-1">Nama Pemesan / Pelanggan</label>
-                <input
-                  type="text"
-                  placeholder="Contoh: Pak Herman (Kantin)"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-hidden focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-zinc-400 font-semibold block mb-1">Saluran Pemesanan</label>
-                <select className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-hidden focus:border-blue-500">
-                  <option>PWA Online</option>
-                  <option>WhatsApp Order</option>
-                  <option>Dine In / Meja</option>
-                  <option>Telepon / Manual</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-zinc-400 font-semibold block mb-1">Catatan Produk / Pesanan</label>
-                <textarea
-                  rows={2}
-                  placeholder="Contoh: Aqua Gallon Refill (5 galon), Gas 3kg (2 tabung)"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-hidden focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => {
-                  setDataMode('live_demo');
-                  setShowNewOrderModal(false);
-                }}
-                className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <CheckCircle className="w-3.5 h-3.5" />
-                <span>Simpan Pesanan Masuk</span>
-              </button>
-              <button
-                onClick={() => setShowNewOrderModal(false)}
-                className="py-2 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition cursor-pointer"
-              >
-                Batal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

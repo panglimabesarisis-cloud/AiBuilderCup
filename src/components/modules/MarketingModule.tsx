@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   Target,
@@ -36,7 +37,7 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
   >(subModule);
 
   // Vouchers
-  const [vouchers, setVouchers] = useState([
+  const [vouchers, setVouchers] = useFirestoreList('vouchers', [
     {
       id: 'VOUCH-01',
       code: 'WEEKENDHEMAT',
@@ -73,7 +74,7 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
   ]);
 
   // Target Gamification (Hadiah Target)
-  const [targets, setTargets] = useState([
+  const [targets, setTargets] = useFirestoreList('sales_targets', [
     {
       id: 'TGT-01',
       title: 'Target Belanja Bulanan Rp 5 Juta (Reseller)',

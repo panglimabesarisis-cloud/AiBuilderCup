@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSetting } from '../../hooks/useSetting';
 import {
   Globe,
   Smartphone,
@@ -43,77 +44,59 @@ export const OnlineOrderModule: React.FC<OnlineOrderModuleProps> = ({
 
   // ================= 1. WEBSITE SETTING (5.19) =================
   // Store Identity & Branding
-  const [webTitle, setWebTitle] = useState('RiskCart Official Store & E-Catalog');
-  const [storeTagline, setStoreTagline] = useState('Pusat Belanja Grosir Sembako & Kebutuhan Harian Terpercaya');
-  const [companyLegalName, setCompanyLegalName] = useState('PT RiskCart Retail Nusantara');
-  const [webDomain, setWebDomain] = useState('toko.riskcart.com');
-  const [customDomainEnabled, setCustomDomainEnabled] = useState(false);
-  const [customCname, setCustomCname] = useState('shop.tokoanda.id');
-  const [sslStatus, setSslStatus] = useState<'active' | 'provisioning'>('active');
-  const [primaryBrandColor, setPrimaryBrandColor] = useState('#2563eb');
-  const [logoUrl, setLogoUrl] = useState('https://images.unsplash.com/photo-1542838132-92c53300491e?w=150&auto=format&fit=crop&q=80');
-
-  // Contact & Social
-  const [whatsappOrderNumber, setWhatsappOrderNumber] = useState('+6281299887711');
-  const [supportEmail, setSupportEmail] = useState('halo@riskcart.com');
-  const [storeAddress, setStoreAddress] = useState('Jl. Boulevard Raya Blok QF1 No. 12, Kelapa Gading, Jakarta Utara');
-  const [googleMapsUrl, setGoogleMapsUrl] = useState('https://maps.google.com/?q=-6.1554,106.9082');
-
-  // Website Content & Announcement
-  const [heroHeading, setHeroHeading] = useState('Belanja Kebutuhan Pokok Harga Distributor Langsung');
-  const [heroSubheading, setHeroSubheading] = useState('Stok terjamin asli, harga grosir terbaik, pengiriman instan langsung dari gudang RiskCart.');
-  const [promoBannerText, setPromoBannerText] = useState('🔥 Promo Gajian: Diskon Rp 20.000 untuk transaksi pertama via Web! Gunakan kode: GAJIAN20');
-  const [showPromoBanner, setShowPromoBanner] = useState(true);
-  const [aboutUsText, setAboutUsText] = useState('RiskCart adalah platform retail modern yang menghubungkan UMKM dan konsumen dengan suplai bahan pokok berkualitas tinggi, stok terpercaya, dan harga bersahabat.');
-  const [enableFaqSection, setEnableFaqSection] = useState(true);
-
-  // Catalog Visibility
-  const [catalogPublished, setCatalogPublished] = useState(true);
-  const [showOutOfStock, setShowOutOfStock] = useState(false);
-  const [showWholesaleCartonPrice, setShowWholesaleCartonPrice] = useState(true);
-  const [showDiscountCountdown, setShowDiscountCountdown] = useState(true);
-  const [showMemberTierBadge, setShowMemberTierBadge] = useState(true);
-
-  // Outlet Serviceability & Business Hours
-  const [enforceStoreHours, setEnforceStoreHours] = useState(true);
-  const [openTime, setOpenTime] = useState('08:00');
-  const [closeTime, setCloseTime] = useState('21:00');
-  const [serviceRadiusKm, setServiceRadiusKm] = useState(10);
-  const [autoCloseWhenOutletClosed, setAutoCloseWhenOutletClosed] = useState(true);
-
-  // ================= 2. CLIENT PWA SETTING (5.19) =================
-  const [pwaAppName, setPwaAppName] = useState('RiskCart Client Order PWA');
-  const [pwaShortName, setPwaShortName] = useState('RiskCart App');
-  const [pwaThemeColor, setPwaThemeColor] = useState('#1d4ed8');
-  const [pwaBgColor, setPwaBgColor] = useState('#09090b');
-  const [pwaStartUrl, setPwaStartUrl] = useState('/client-pwa/');
-  const [pwaDisplayMode, setPwaDisplayMode] = useState<'standalone' | 'fullscreen' | 'minimal-ui'>('standalone');
-
-  // Product Visibility in PWA
-  const [pwaShowOnlyInStock, setPwaShowOnlyInStock] = useState(true);
-  const [pwaShowMemberDiscounts, setPwaShowMemberDiscounts] = useState(true);
-  const [pwaEnableBarcodeScan, setPwaEnableBarcodeScan] = useState(true);
-
-  // Ordering Availability & Capacity
-  const [pwaAcceptingOrders, setPwaAcceptingOrders] = useState(true);
-  const [dailyOrderCap, setDailyOrderCap] = useState(150);
-  const [minOrderDelivery, setMinOrderDelivery] = useState(50000);
-  const [minOrderPickup, setMinOrderPickup] = useState(20000);
-  const [estPrepTimeMinutes, setEstPrepTimeMinutes] = useState(25);
-
-  // Delivery Configuration
-  const [allowSelfPickup, setAllowSelfPickup] = useState(true);
-  const [allowStoreCourier, setAllowStoreCourier] = useState(true);
-  const [allowInstantGosend, setAllowInstantGosend] = useState(true);
-  const [deliveryBaseFee, setDeliveryBaseFee] = useState(8000);
-  const [freeDeliveryMinSpend, setFreeDeliveryMinSpend] = useState(150000);
-
-  // Customer Access & Supported Features
-  const [allowGuestCheckout, setAllowGuestCheckout] = useState(false);
-  const [allowCustomerKasbonVIP, setAllowCustomerKasbonVIP] = useState(true);
-  const [enablePwaPointsRedeem, setEnablePwaPointsRedeem] = useState(true);
-  const [enableLiveOrderStatusTracking, setEnableLiveOrderStatusTracking] = useState(true);
-  const [geofenceRadius, setGeofenceRadius] = useState(500); // 500m for store pickup detection
+  const [webTitle, setWebTitle] = useSetting('online_order', 'webTitle', 'RiskCart Official Store & E-Catalog');
+  const [storeTagline, setStoreTagline] = useSetting('online_order', 'storeTagline', 'Pusat Belanja Grosir Sembako & Kebutuhan Harian Terpercaya');
+  const [companyLegalName, setCompanyLegalName] = useSetting('online_order', 'companyLegalName', 'PT RiskCart Retail Nusantara');
+  const [webDomain, setWebDomain] = useSetting('online_order', 'webDomain', 'toko.riskcart.com');
+  const [customDomainEnabled, setCustomDomainEnabled] = useSetting('online_order', 'customDomainEnabled', false);
+  const [customCname, setCustomCname] = useSetting('online_order', 'customCname', 'shop.tokoanda.id');
+  const [sslStatus, setSslStatus] = useSetting<'active' | 'provisioning'>('online_order', 'sslStatus', 'active');
+  const [primaryBrandColor, setPrimaryBrandColor] = useSetting('online_order', 'primaryBrandColor', '#2563eb');
+  const [logoUrl, setLogoUrl] = useSetting('online_order', 'logoUrl', 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=150&auto=format&fit=crop&q=80');// Contact & Social
+  const [whatsappOrderNumber, setWhatsappOrderNumber] = useSetting('online_order', 'whatsappOrderNumber', '+6281299887711');
+  const [supportEmail, setSupportEmail] = useSetting('online_order', 'supportEmail', 'halo@riskcart.com');
+  const [storeAddress, setStoreAddress] = useSetting('online_order', 'storeAddress', 'Jl. Boulevard Raya Blok QF1 No. 12, Kelapa Gading, Jakarta Utara');
+  const [googleMapsUrl, setGoogleMapsUrl] = useSetting('online_order', 'googleMapsUrl', 'https://maps.google.com/?q=-6.1554,106.9082');// Website Content & Announcement
+  const [heroHeading, setHeroHeading] = useSetting('online_order', 'heroHeading', 'Belanja Kebutuhan Pokok Harga Distributor Langsung');
+  const [heroSubheading, setHeroSubheading] = useSetting('online_order', 'heroSubheading', 'Stok terjamin asli, harga grosir terbaik, pengiriman instan langsung dari gudang RiskCart.');
+  const [promoBannerText, setPromoBannerText] = useSetting('online_order', 'promoBannerText', '🔥 Promo Gajian: Diskon Rp 20.000 untuk transaksi pertama via Web! Gunakan kode: GAJIAN20');
+  const [showPromoBanner, setShowPromoBanner] = useSetting('online_order', 'showPromoBanner', true);
+  const [aboutUsText, setAboutUsText] = useSetting('online_order', 'aboutUsText', 'RiskCart adalah platform retail modern yang menghubungkan UMKM dan konsumen dengan suplai bahan pokok berkualitas tinggi, stok terpercaya, dan harga bersahabat.');
+  const [enableFaqSection, setEnableFaqSection] = useSetting('online_order', 'enableFaqSection', true);// Catalog Visibility
+  const [catalogPublished, setCatalogPublished] = useSetting('online_order', 'catalogPublished', true);
+  const [showOutOfStock, setShowOutOfStock] = useSetting('online_order', 'showOutOfStock', false);
+  const [showWholesaleCartonPrice, setShowWholesaleCartonPrice] = useSetting('online_order', 'showWholesaleCartonPrice', true);
+  const [showDiscountCountdown, setShowDiscountCountdown] = useSetting('online_order', 'showDiscountCountdown', true);
+  const [showMemberTierBadge, setShowMemberTierBadge] = useSetting('online_order', 'showMemberTierBadge', true);// Outlet Serviceability & Business Hours
+  const [enforceStoreHours, setEnforceStoreHours] = useSetting('online_order', 'enforceStoreHours', true);
+  const [openTime, setOpenTime] = useSetting('online_order', 'openTime', '08:00');
+  const [closeTime, setCloseTime] = useSetting('online_order', 'closeTime', '21:00');
+  const [serviceRadiusKm, setServiceRadiusKm] = useSetting('online_order', 'serviceRadiusKm', 10);
+  const [autoCloseWhenOutletClosed, setAutoCloseWhenOutletClosed] = useSetting('online_order', 'autoCloseWhenOutletClosed', true);// ================= 2. CLIENT PWA SETTING (5.19) =================
+  const [pwaAppName, setPwaAppName] = useSetting('online_order', 'pwaAppName', 'RiskCart Client Order PWA');
+  const [pwaShortName, setPwaShortName] = useSetting('online_order', 'pwaShortName', 'RiskCart App');
+  const [pwaThemeColor, setPwaThemeColor] = useSetting('online_order', 'pwaThemeColor', '#1d4ed8');
+  const [pwaBgColor, setPwaBgColor] = useSetting('online_order', 'pwaBgColor', '#09090b');
+  const [pwaStartUrl, setPwaStartUrl] = useSetting('online_order', 'pwaStartUrl', '/client-pwa/');
+  const [pwaDisplayMode, setPwaDisplayMode] = useSetting<'standalone' | 'fullscreen' | 'minimal-ui'>('online_order', 'pwaDisplayMode', 'standalone');// Product Visibility in PWA
+  const [pwaShowOnlyInStock, setPwaShowOnlyInStock] = useSetting('online_order', 'pwaShowOnlyInStock', true);
+  const [pwaShowMemberDiscounts, setPwaShowMemberDiscounts] = useSetting('online_order', 'pwaShowMemberDiscounts', true);
+  const [pwaEnableBarcodeScan, setPwaEnableBarcodeScan] = useSetting('online_order', 'pwaEnableBarcodeScan', true);// Ordering Availability & Capacity
+  const [pwaAcceptingOrders, setPwaAcceptingOrders] = useSetting('online_order', 'pwaAcceptingOrders', true);
+  const [dailyOrderCap, setDailyOrderCap] = useSetting('online_order', 'dailyOrderCap', 150);
+  const [minOrderDelivery, setMinOrderDelivery] = useSetting('online_order', 'minOrderDelivery', 50000);
+  const [minOrderPickup, setMinOrderPickup] = useSetting('online_order', 'minOrderPickup', 20000);
+  const [estPrepTimeMinutes, setEstPrepTimeMinutes] = useSetting('online_order', 'estPrepTimeMinutes', 25);// Delivery Configuration
+  const [allowSelfPickup, setAllowSelfPickup] = useSetting('online_order', 'allowSelfPickup', true);
+  const [allowStoreCourier, setAllowStoreCourier] = useSetting('online_order', 'allowStoreCourier', true);
+  const [allowInstantGosend, setAllowInstantGosend] = useSetting('online_order', 'allowInstantGosend', true);
+  const [deliveryBaseFee, setDeliveryBaseFee] = useSetting('online_order', 'deliveryBaseFee', 8000);
+  const [freeDeliveryMinSpend, setFreeDeliveryMinSpend] = useSetting('online_order', 'freeDeliveryMinSpend', 150000);// Customer Access & Supported Features
+  const [allowGuestCheckout, setAllowGuestCheckout] = useSetting('online_order', 'allowGuestCheckout', false);
+  const [allowCustomerKasbonVIP, setAllowCustomerKasbonVIP] = useSetting('online_order', 'allowCustomerKasbonVIP', true);
+  const [enablePwaPointsRedeem, setEnablePwaPointsRedeem] = useSetting('online_order', 'enablePwaPointsRedeem', true);
+  const [enableLiveOrderStatusTracking, setEnableLiveOrderStatusTracking] = useSetting('online_order', 'enableLiveOrderStatusTracking', true);
+  const [geofenceRadius, setGeofenceRadius] = useSetting('online_order', 'geofenceRadius', 500);// 500m for store pickup detection
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();

@@ -58,7 +58,7 @@ export async function createSaleWithStock(
     );
     const now = new Date().toISOString();
     next.forEach((n) => t.update(n.ref, { stockInUnits: n.stock, updatedAt: now }));
-    t.set(txRef, { ...txPayload, stockDeducted: true });
+    t.set(txRef, { ...txPayload, items: items.map((it) => ({ ...it, transactionId: txRef.id })), stockDeducted: true });
     for (const it of items) {
       t.set(doc(collection(db, 'transactions', txRef.id, 'items')), { ...it, transactionId: txRef.id });
     }

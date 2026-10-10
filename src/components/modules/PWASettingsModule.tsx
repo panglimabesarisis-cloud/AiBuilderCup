@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSetting } from '../../hooks/useSetting';
 import {
   Smartphone,
   Sliders,
@@ -42,45 +43,35 @@ export const PWASettingsModule: React.FC<PWASettingsModuleProps> = ({
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // ================= 1. UMUM (5.20) =================
-  const [appName, setAppName] = useState('RiskCart Member PWA');
-  const [shortName, setShortName] = useState('RiskCart App');
-  const [pwaThemeColor, setPwaThemeColor] = useState('#2563eb');
-  const [pwaBgColor, setPwaBgColor] = useState('#09090b');
-  const [displayMode, setDisplayMode] = useState<'standalone' | 'fullscreen' | 'minimal-ui'>('standalone');
-  const [offlineCacheEnabled, setOfflineCacheEnabled] = useState(true);
-  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
-  const [enableA2hsBanner, setEnableA2hsBanner] = useState(true);
-  const [cacheVersion, setCacheVersion] = useState('v2.4.10-rev3');
-
-  // ================= 2. ORDER PELANGGAN (5.20) =================
+  const [appName, setAppName] = useSetting('pwa', 'appName', 'RiskCart Member PWA');
+  const [shortName, setShortName] = useSetting('pwa', 'shortName', 'RiskCart App');
+  const [pwaThemeColor, setPwaThemeColor] = useSetting('pwa', 'pwaThemeColor', '#2563eb');
+  const [pwaBgColor, setPwaBgColor] = useSetting('pwa', 'pwaBgColor', '#09090b');
+  const [displayMode, setDisplayMode] = useSetting<'standalone' | 'fullscreen' | 'minimal-ui'>('pwa', 'displayMode', 'standalone');
+  const [offlineCacheEnabled, setOfflineCacheEnabled] = useSetting('pwa', 'offlineCacheEnabled', true);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useSetting('pwa', 'autoUpdateEnabled', true);
+  const [enableA2hsBanner, setEnableA2hsBanner] = useSetting('pwa', 'enableA2hsBanner', true);
+  const [cacheVersion, setCacheVersion] = useSetting('pwa', 'cacheVersion', 'v2.4.10-rev3');// ================= 2. ORDER PELANGGAN (5.20) =================
   // Methods
-  const [allowDineInTableQr, setAllowDineInTableQr] = useState(true);
-  const [allowTakeaway, setAllowTakeaway] = useState(true);
-  const [allowStoreDelivery, setAllowStoreDelivery] = useState(true);
-  const [allowInstantCourier, setAllowInstantCourier] = useState(true);
-
-  // Minimum order rules
-  const [minOrderPickup, setMinOrderPickup] = useState(15000);
-  const [minOrderDelivery, setMinOrderDelivery] = useState(50000);
-  const [maxItemPerOrder, setMaxItemPerOrder] = useState(60);
-  const [cartReservationTimeoutMinutes, setCartReservationTimeoutMinutes] = useState(20);
-
-  // Fulfillment & Service Areas
-  const [enableTimeSlotDelivery, setEnableTimeSlotDelivery] = useState(true);
-  const [allowMultiSavedAddresses, setAllowMultiSavedAddresses] = useState(true);
-  const [serviceRadiusKm, setServiceRadiusKm] = useState(7);
-  const [deliveryBaseFee, setDeliveryBaseFee] = useState(8000);
-  const [deliveryFeePerKm, setDeliveryFeePerKm] = useState(2500);
-  const [freeDeliveryThreshold, setFreeDeliveryThreshold] = useState(150000);
-
-  // ================= 3. NOTIFIKASI (5.20) =================
+  const [allowDineInTableQr, setAllowDineInTableQr] = useSetting('pwa', 'allowDineInTableQr', true);
+  const [allowTakeaway, setAllowTakeaway] = useSetting('pwa', 'allowTakeaway', true);
+  const [allowStoreDelivery, setAllowStoreDelivery] = useSetting('pwa', 'allowStoreDelivery', true);
+  const [allowInstantCourier, setAllowInstantCourier] = useSetting('pwa', 'allowInstantCourier', true);// Minimum order rules
+  const [minOrderPickup, setMinOrderPickup] = useSetting('pwa', 'minOrderPickup', 15000);
+  const [minOrderDelivery, setMinOrderDelivery] = useSetting('pwa', 'minOrderDelivery', 50000);
+  const [maxItemPerOrder, setMaxItemPerOrder] = useSetting('pwa', 'maxItemPerOrder', 60);
+  const [cartReservationTimeoutMinutes, setCartReservationTimeoutMinutes] = useSetting('pwa', 'cartReservationTimeoutMinutes', 20);// Fulfillment & Service Areas
+  const [enableTimeSlotDelivery, setEnableTimeSlotDelivery] = useSetting('pwa', 'enableTimeSlotDelivery', true);
+  const [allowMultiSavedAddresses, setAllowMultiSavedAddresses] = useSetting('pwa', 'allowMultiSavedAddresses', true);
+  const [serviceRadiusKm, setServiceRadiusKm] = useSetting('pwa', 'serviceRadiusKm', 7);
+  const [deliveryBaseFee, setDeliveryBaseFee] = useSetting('pwa', 'deliveryBaseFee', 8000);
+  const [deliveryFeePerKm, setDeliveryFeePerKm] = useSetting('pwa', 'deliveryFeePerKm', 2500);
+  const [freeDeliveryThreshold, setFreeDeliveryThreshold] = useSetting('pwa', 'freeDeliveryThreshold', 150000);// ================= 3. NOTIFIKASI (5.20) =================
   // Channels
-  const [waGatewayActive, setWaGatewayActive] = useState(true);
-  const [waGatewayProvider, setWaGatewayProvider] = useState<'wablas' | 'fonnte' | 'twilio'>('fonnte');
-  const [webPushActive, setWebPushActive] = useState(true);
-  const [emailTxActive, setEmailTxActive] = useState(true);
-
-  // Templates
+  const [waGatewayActive, setWaGatewayActive] = useSetting('pwa', 'waGatewayActive', true);
+  const [waGatewayProvider, setWaGatewayProvider] = useSetting<'wablas' | 'fonnte' | 'twilio'>('pwa', 'waGatewayProvider', 'fonnte');
+  const [webPushActive, setWebPushActive] = useSetting('pwa', 'webPushActive', true);
+  const [emailTxActive, setEmailTxActive] = useSetting('pwa', 'emailTxActive', true);// Templates
   const [waTemplateOrderPlaced, setWaTemplateOrderPlaced] = useState(
     'Halo {{customer_name}}, pesanan {{order_id}} sebesar Rp {{total}} telah kami terima di RiskCart! Kami sedang menyiapkannya.'
   );
@@ -90,32 +81,27 @@ export const PWASettingsModule: React.FC<PWASettingsModuleProps> = ({
   const [waTemplateAbandonedCart, setWaTemplateAbandonedCart] = useState(
     'Halo {{customer_name}}, produk favorit Anda di keranjang RiskCart masih menunggu! Selesaikan pesanan sekarang sebelum stok habis: {{cart_link}}'
   );
-  const [enableAbandonedCartReminder, setEnableAbandonedCartReminder] = useState(true);
-
-  // ================= 4. PEMBAYARAN (5.20) =================
-  const [enableQrisPwa, setEnableQrisPwa] = useState(true);
-  const [enableVaBca, setEnableVaBca] = useState(true);
-  const [enableVaMandiri, setEnableVaMandiri] = useState(true);
-  const [enableVaBri, setEnableVaBri] = useState(true);
-  const [enableEwalletGopay, setEnableEwalletGopay] = useState(true);
-  const [enableEwalletShopeepay, setEnableEwalletShopeepay] = useState(true);
-  const [enableCodPwa, setEnableCodPwa] = useState(true);
-  const [maxCodLimit, setMaxCodLimit] = useState(300000);
-  const [enableMemberKasbon, setEnableMemberKasbon] = useState(true);
-  const [paymentExpiryMinutes, setPaymentExpiryMinutes] = useState(15);
-  const [autoCancelUnpaid, setAutoCancelUnpaid] = useState(true);
-
-  // ================= 5. HAK DAN AKSES (5.20) =================
-  const [authMethod, setAuthMethod] = useState<'whatsapp_otp' | 'google_sso' | 'both'>('both');
-  const [allowGuestWithoutLogin, setAllowGuestWithoutLogin] = useState(false);
-  const [requireGpsValidation, setRequireGpsValidation] = useState(true);
-  const [blockMockGps, setBlockMockGps] = useState(true);
-  const [enableTurnstileAntiBot, setEnableTurnstileAntiBot] = useState(true);
-  const [autoHoldFraudRiskOrders, setAutoHoldFraudRiskOrders] = useState(true);
-  const [fraudScoreThreshold, setFraudScoreThreshold] = useState(70);
-  const [allowCustomerDownloadInvoicePdf, setAllowCustomerDownloadInvoicePdf] = useState(true);
-  const [enforceUuPdpPrivacyConsent, setEnforceUuPdpPrivacyConsent] = useState(true);
-
+  const [enableAbandonedCartReminder, setEnableAbandonedCartReminder] = useSetting('pwa', 'enableAbandonedCartReminder', true);// ================= 4. PEMBAYARAN (5.20) =================
+  const [enableQrisPwa, setEnableQrisPwa] = useSetting('pwa', 'enableQrisPwa', true);
+  const [enableVaBca, setEnableVaBca] = useSetting('pwa', 'enableVaBca', true);
+  const [enableVaMandiri, setEnableVaMandiri] = useSetting('pwa', 'enableVaMandiri', true);
+  const [enableVaBri, setEnableVaBri] = useSetting('pwa', 'enableVaBri', true);
+  const [enableEwalletGopay, setEnableEwalletGopay] = useSetting('pwa', 'enableEwalletGopay', true);
+  const [enableEwalletShopeepay, setEnableEwalletShopeepay] = useSetting('pwa', 'enableEwalletShopeepay', true);
+  const [enableCodPwa, setEnableCodPwa] = useSetting('pwa', 'enableCodPwa', true);
+  const [maxCodLimit, setMaxCodLimit] = useSetting('pwa', 'maxCodLimit', 300000);
+  const [enableMemberKasbon, setEnableMemberKasbon] = useSetting('pwa', 'enableMemberKasbon', true);
+  const [paymentExpiryMinutes, setPaymentExpiryMinutes] = useSetting('pwa', 'paymentExpiryMinutes', 15);
+  const [autoCancelUnpaid, setAutoCancelUnpaid] = useSetting('pwa', 'autoCancelUnpaid', true);// ================= 5. HAK DAN AKSES (5.20) =================
+  const [authMethod, setAuthMethod] = useSetting<'whatsapp_otp' | 'google_sso' | 'both'>('pwa', 'authMethod', 'both');
+  const [allowGuestWithoutLogin, setAllowGuestWithoutLogin] = useSetting('pwa', 'allowGuestWithoutLogin', false);
+  const [requireGpsValidation, setRequireGpsValidation] = useSetting('pwa', 'requireGpsValidation', true);
+  const [blockMockGps, setBlockMockGps] = useSetting('pwa', 'blockMockGps', true);
+  const [enableTurnstileAntiBot, setEnableTurnstileAntiBot] = useSetting('pwa', 'enableTurnstileAntiBot', true);
+  const [autoHoldFraudRiskOrders, setAutoHoldFraudRiskOrders] = useSetting('pwa', 'autoHoldFraudRiskOrders', true);
+  const [fraudScoreThreshold, setFraudScoreThreshold] = useSetting('pwa', 'fraudScoreThreshold', 70);
+  const [allowCustomerDownloadInvoicePdf, setAllowCustomerDownloadInvoicePdf] = useSetting('pwa', 'allowCustomerDownloadInvoicePdf', true);
+  const [enforceUuPdpPrivacyConsent, setEnforceUuPdpPrivacyConsent] = useSetting('pwa', 'enforceUuPdpPrivacyConsent', true);
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setSavedSuccess(true);

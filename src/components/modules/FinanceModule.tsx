@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   Vault,
@@ -42,7 +43,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   });
 
   // Financial Account Types (Type Keuangan)
-  const [accountTypes, setAccountTypes] = useState([
+  const [accountTypes, setAccountTypes] = useFirestoreList('account_types', [
     {
       code: 'ACT-101',
       name: 'Kas Kecil Laci POS (Petty Cash)',
@@ -81,7 +82,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   ]);
 
   // Financial History (Riwayat Keuangan)
-  const [historyLedger, setHistoryLedger] = useState([
+  const [historyLedger, setHistoryLedger] = useFirestoreList('finance_ledger', [
     {
       id: 'FIN-202610-01',
       date: '10 Okt 2026, 12:00 WIB',

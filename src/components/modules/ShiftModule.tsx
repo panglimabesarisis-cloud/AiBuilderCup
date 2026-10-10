@@ -1,3 +1,4 @@
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 import React, { useState } from 'react';
 import {
   Clock,
@@ -57,7 +58,7 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
   });
 
   // Kas Masuk Entries
-  const [kasMasukList, setKasMasukList] = useState([
+  const [kasMasukList, setKasMasukList] = useFirestoreList('cash_in', [
     {
       id: 'KM-001',
       time: '08:45 WIB',
@@ -79,7 +80,7 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
   ]);
 
   // Kas Keluar Entries
-  const [kasKeluarList, setKasKeluarList] = useState([
+  const [kasKeluarList, setKasKeluarList] = useFirestoreList('cash_out', [
     {
       id: 'KK-001',
       time: '09:20 WIB',
@@ -101,7 +102,7 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
   ]);
 
   // Riwayat Shift (Riwayat Shit - preserving requested label)
-  const [shiftHistory, setShiftHistory] = useState([
+  const [shiftHistory, setShiftHistory] = useFirestoreList('shift_history', [
     {
       id: 'SHF-20261009-02',
       date: '09 Okt 2026',

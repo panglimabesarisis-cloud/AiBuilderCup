@@ -377,7 +377,7 @@ export async function seedDemoDataIfEmpty(): Promise<boolean> {
     for (const tx of INITIAL_TRANSACTIONS) {
       const txRef = doc(db, 'transactions', tx.id);
       const { items, ...txData } = tx;
-      batch.set(txRef, txData);
+      batch.set(txRef, { ...txData, items: items || [], stockDeducted: txData.status === 'completed' });
 
       if (items && items.length > 0) {
         for (const item of items) {
@@ -450,7 +450,7 @@ export async function resetDatabaseWithFreshSeed(): Promise<void> {
   // Transactions
   for (const tx of INITIAL_TRANSACTIONS) {
     const { items, ...txData } = tx;
-    batch.set(doc(db, 'transactions', tx.id), txData);
+    batch.set(doc(db, 'transactions', tx.id), { ...txData, items: items || [], stockDeducted: txData.status === 'completed' });
     if (items) {
       for (const item of items) {
         batch.set(doc(db, 'transactions', tx.id, 'items', item.id), item);
