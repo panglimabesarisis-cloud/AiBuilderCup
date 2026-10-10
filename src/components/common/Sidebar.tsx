@@ -62,6 +62,7 @@ export interface SidebarProps {
   setActiveTab: (tab: string) => void;
   activeSubModule?: string;
   setActiveSubModule?: (sub: string) => void;
+  navigateTo?: (tab: string, sub?: string) => void;
   isCollapsed: boolean;
   toggleCollapsed: () => void;
   isMobileOpen: boolean;
@@ -79,6 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   activeSubModule = '',
   setActiveSubModule,
+  navigateTo,
   isCollapsed,
   toggleCollapsed,
   isMobileOpen,
@@ -166,19 +168,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setOpenAiAgentsList(false);
   };
 
-  // 11 Dedicated AI Agents
+  // Agen AI yang benar-benar terhubung ke server (knowledge tersimpan di Firestore: ai_agents/{subModule})
   const aiAgentsList = [
-    { id: 'agent_1', name: 'Anti-Fraud Sentinel AI', latency: '142ms', status: 'active' },
-    { id: 'agent_purchase', name: 'AI Advisor Purchase (7-Day Lock)', latency: '190ms', status: 'active', subModule: 'ai_advisor_purchase' },
-    { id: 'agent_2', name: 'Order Intent & Typo Parser', latency: '185ms', status: 'active' },
-    { id: 'agent_3', name: 'Strategic Restock Advisor', latency: '210ms', status: 'active' },
-    { id: 'agent_4', name: 'Tanya AI Business Copilot', latency: '160ms', status: 'active' },
-    { id: 'agent_5', name: 'Dynamic Pricing Optimizer', latency: '195ms', status: 'active' },
-    { id: 'agent_6', name: 'Customer Retention & Churn AI', latency: '175ms', status: 'active' },
-    { id: 'agent_7', name: 'Loss Prevention & Cash Anomaly', latency: '130ms', status: 'active' },
-    { id: 'agent_8', name: 'Supplier Price Anomaly AI', latency: '220ms', status: 'active' },
-    { id: 'agent_9', name: 'Staff KPI & Performance AI', latency: '165ms', status: 'active' },
-    { id: 'agent_10', name: 'Voice & Barcode Scanner AI', latency: '155ms', status: 'active' },
+    { id: 'agent_1', name: 'Anti-Fraud Sentinel AI', subModule: 'ai_fraud_transaction' },
+    { id: 'agent_2', name: 'Order Intent & Typo Parser', subModule: 'ai_advisor_order' },
+    { id: 'agent_3', name: 'Strategic Restock Advisor', subModule: 'ai_advisor_purchase' },
   ];
 
   const formatTimer = (totalSec: number) => {
@@ -189,9 +183,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleNav = (tabId: string, subId?: string) => {
-    setActiveTab(tabId);
-    if (subId && setActiveSubModule) {
-      setActiveSubModule(subId);
+    if (navigateTo) {
+      navigateTo(tabId, subId);
+    } else {
+      setActiveTab(tabId);
+      if (subId && setActiveSubModule) setActiveSubModule(subId);
     }
     if (isMobileOpen) setIsMobileOpen(false);
   };
@@ -398,7 +394,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 group-hover:scale-125 transition-transform" />
                               <span className="truncate">{agent.name}</span>
                             </div>
-                            <span className="text-[9px] text-zinc-500 font-mono group-hover:text-purple-400">{agent.latency}</span>
                           </button>
                         ))}
                       </div>

@@ -1,0 +1,140 @@
+rules_version = '2';
+
+// USULAN rules untuk RiskCart. BELUM diuji di emulator: uji dulu di Rules Playground / Firebase Emulator.
+//
+// PENTING: app saat ini TIDAK punya login sama sekali. Rules ini menolak semua akses tanpa login, jadi
+// jangan dipasang sebelum frontend menambah Firebase Auth (Anonymous untuk pelanggan, Email/Password untuk staff)
+// dan perubahan di bawah ini, kalau tidak POS dan PWA akan berhenti bekerja:
+//   1. PWA: saat boot panggil signInAnonymously(); simpan "customerUid" = auth.currentUser.uid di setiap pesanan.
+//   2. PWA: query riwayat pesanan wajib where('customerUid','==',uid) (butuh indeks gabungan dengan createdAt).
+//   3. dataSeeder dan tombol Reset database: jalankan sebagai admin, bukan dari pengunjung biasa.
+//   4. Hapus tombol Simulate Clean Sale / Simulate Fraud Attempt dan tombol simulasi tahap di modal riwayat pelanggan.
+//
+// Model peran: dokumen users/{uid} dengan field role = 'admin' | 'cashier'.
+// Siapa pun yang login tapi tidak punya dokumen users/{uid} dianggap pelanggan (termasuk Anonymous sign-in).
+// Dokumen users/ hanya bisa dibuat/diubah admin (admin pertama dibuat manual lewat Firebase Console).
+//
+// Penulisan fraud_logs, restock_recommendations, dan field sensitif customers (phoneVerified, points, tier)
+// sengaja DITUTUP untuk klien. Itu hanya bisa ditulis server (firebase-admin melewati rules).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ───────────── Helper ─────────────
+    function signedIn() {
+      return request.auth != null;
+    }
+    function hasUserDoc() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function role() {
+      return hasUserDoc()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : 'customer';
+    }
+    function isAdmin() {
+      return role() == 'admin';
+    }
+    function isStaff() {
+      return role() in ['admin', 'cashier'];
+    }
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ───────────── users (peran) ─────────────
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ───────────── stores ─────────────
+    match /stores/{storeId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ───────────── products ─────────────
+    match /products/{productId} {
+      allow read: if signedIn();                       // pelanggan butuh katalog
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isStaff() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['stockInUnits', 'updatedAt']));  // kasir hanya boleh ubah stok
+    }
+
+    // ───────────── customers (member PWA) ─────────────
+    match /customers/{uid} {
+      allow read: if isOwner(uid) || isStaff();
+      // Pelanggan boleh membuat profilnya sendiri, tapi TIDAK bisa menandai phoneVerified/poin/tier.
+      allow create: if isOwner(uid)
+        && request.resource.data.phoneVerified == false
+        && request.resource.data.get('points', 0) == 0;
+      allow update: if isStaff()
+        || (isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // ───────────── transactions ─────────────
+    // Catatan: field "customerUid" perlu ditambahkan ke skema Transaction di blueprint.
+    match /transactions/{txId} {
+      allow read: if isStaff()
+        || (signedIn() && resource.data.customerUid == request.auth.uid);
+
+      allow create: if
+        // Kasir/Admin membuat transaksi POS
+        (isStaff() && request.resource.data.channel == 'pos')
+        // Pelanggan membuat order PWA: harus milik sendiri dan selalu menunggu persetujuan
+        || (signedIn()
+            && request.resource.data.channel == 'pwa_client'
+            && request.resource.data.customerUid == request.auth.uid
+            && request.resource.data.status == 'pending_approval'
+            && request.resource.data.totalAmount is number
+            && request.resource.data.totalAmount >= 0);
+
+      // Status, skor fraud, dan keputusan hanya boleh diubah staff (atau server)
+      allow update, delete: if isStaff();
+
+      match /items/{itemId} {
+        allow read: if isStaff()
+          || (signedIn()
+              && get(/databases/$(database)/documents/transactions/$(txId)).data.customerUid == request.auth.uid);
+
+        // getAfter(): item dibuat dalam batch yang sama dengan transaksinya
+        allow create: if isStaff()
+          || (signedIn()
+              && getAfter(/databases/$(database)/documents/transactions/$(txId)).data.customerUid == request.auth.uid
+              && getAfter(/databases/$(database)/documents/transactions/$(txId)).data.status == 'pending_approval');
+
+        allow update, delete: if isStaff();
+      }
+    }
+
+    // ───────────── fraud_logs & restock_recommendations ─────────────
+    // Server saat ini belum memakai firebase-admin, jadi sementara staff boleh membuat log dari klien.
+    // Setelah server memakai firebase-admin, ganti "create" menjadi: allow create: if false;
+    match /fraud_logs/{logId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      // Halaman Inspector hanya menandai selesai
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resolved']);
+      allow delete: if false;
+    }
+    match /restock_recommendations/{recId} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // ───────────── ai_agents (knowledge AI) ─────────────
+    // Server memakai Firebase client SDK tanpa login, jadi saat rules ini aktif server HARUS pindah ke firebase-admin.
+    match /ai_agents/{agentId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // Semua path lain: ditolak (default deny)
+  }
+}

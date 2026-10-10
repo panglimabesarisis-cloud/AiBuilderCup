@@ -68,6 +68,7 @@ export const AntiFraudInspector: React.FC = () => {
         storeLongitude: 106.8456,
         geofenceRadiusMeters: 500,
         velocityCount: sandboxVelocity,
+        sandbox: true, // hanya berlaku jika server memakai ALLOW_FRAUD_SANDBOX=true
       };
 
       const res = await fetch('/api/ai/anti-fraud', {

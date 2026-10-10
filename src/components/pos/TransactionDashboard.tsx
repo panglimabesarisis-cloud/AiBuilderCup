@@ -5,6 +5,7 @@ import {
   doc,
   updateDoc,
   addDoc,
+  getDocs,
   query,
   orderBy,
   limit,
@@ -12,6 +13,8 @@ import {
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Transaction, TransactionStatus } from '../../types';
 import { DEMO_STORE_ID } from '../../services/dataSeeder';
+import { deductStockForOrder } from '../../services/stockService';
+import { formatIDR } from '../../lib/money';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -61,7 +64,7 @@ export const TransactionDashboard: React.FC = () => {
         // Flash banner if a new document just arrived
         if (!loading && docs.length > transactions.length && docs.length > 0) {
           const newest = docs[0];
-          setNewTxAlert(`New Transaction: #${newest.id.slice(-6)} ($${newest.totalAmount.toFixed(2)})`);
+          setNewTxAlert(`New Transaction: #${newest.id.slice(-6)} (${formatIDR(newest.totalAmount)})`);
           setTimeout(() => setNewTxAlert(null), 4000);
         }
 
@@ -111,6 +114,15 @@ export const TransactionDashboard: React.FC = () => {
   // Approve a transaction
   const handleApprove = async (txId: string) => {
     try {
+      const target = transactions.find((t) => t.id === txId);
+      if (target && target.status !== 'completed') {
+        let lines = (target.items || []).map((it) => ({ productId: it.productId, units: Number(it.unitsDeducted) || 0 }));
+        if (lines.length === 0) {
+          const snap = await getDocs(collection(db, 'transactions', txId, 'items'));
+          lines = snap.docs.map((d) => ({ productId: d.data().productId, units: Number(d.data().unitsDeducted) || 0 }));
+        }
+        await deductStockForOrder(txId, lines); // atomik; gagal bila stok kurang
+      }
       const txRef = doc(db, 'transactions', txId);
       await updateDoc(txRef, {
         status: 'completed' as TransactionStatus,
@@ -121,6 +133,10 @@ export const TransactionDashboard: React.FC = () => {
         setSelectedTx({ ...selectedTx, status: 'completed' });
       }
     } catch (error) {
+      if (error instanceof Error && /^Stok|^Produk|^Transaksi/.test(error.message)) {
+        window.alert(error.message);
+        return;
+      }
       handleFirestoreError(error, OperationType.UPDATE, `transactions/${txId}`);
     }
   };
@@ -139,58 +155,6 @@ export const TransactionDashboard: React.FC = () => {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `transactions/${txId}`);
-    }
-  };
-
-  // Simulate an incoming live transaction for judges/demo
-  const handleSimulateTransaction = async (isFraudScenario: boolean) => {
-    setIsSimulating(true);
-    try {
-      const randomId = 'tx_live_' + Math.floor(1000 + Math.random() * 9000);
-      const newTransaction: Omit<Transaction, 'id'> = isFraudScenario
-        ? {
-            storeId: DEMO_STORE_ID,
-            channel: 'pwa_client',
-            customerName: 'Anomalous Bot #' + Math.floor(100 + Math.random() * 900),
-            customerPhone: '+62877' + Math.floor(10000000 + Math.random() * 90000000),
-            totalAmount: 180.0,
-            totalCost: 126.0,
-            paymentMethod: 'bank_transfer',
-            status: 'flagged_fraud',
-            fraudScore: 89,
-            fraudFlags: ['GEOFENCE_EXCEEDED_8200M', 'MOCK_GPS_SUSPECTED', 'VELOCITY_SPIKE'],
-            riskLevel: 'critical',
-            distanceToStoreMeters: 8250,
-            gpsAccuracy: 0,
-            isMockGpsSuspected: true,
-            aiExplanation:
-              'Simulated AI Anomaly: Transaction originated 8.2km outside geofence with 0m precision mock telemetry and high carton volume drain.',
-            createdAt: new Date().toISOString(),
-          }
-        : {
-            storeId: DEMO_STORE_ID,
-            channel: 'pos',
-            customerName: 'Customer Walk-in #' + Math.floor(10 + Math.random() * 90),
-            totalAmount: 22.5,
-            totalCost: 14.8,
-            paymentMethod: 'qris',
-            status: 'completed',
-            fraudScore: 6,
-            fraudFlags: ['VERIFIED_POS_CHECKOUT'],
-            riskLevel: 'clean',
-            distanceToStoreMeters: 5,
-            gpsAccuracy: 8,
-            aiExplanation:
-              'Verified in-person purchase at POS counter. Geolocation calibrated directly at retail cash register.',
-            cashierId: 'cashier_01',
-            createdAt: new Date().toISOString(),
-          };
-
-      await addDoc(collection(db, 'transactions'), newTransaction);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'transactions');
-    } finally {
-      setIsSimulating(false);
     }
   };
 
@@ -221,28 +185,6 @@ export const TransactionDashboard: React.FC = () => {
             Real-time anti-fraud monitoring, GPS geofence tracking, and automated carton conversion audit.
           </p>
         </div>
-
-        {/* Live Simulation Controls for Demo */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => handleSimulateTransaction(false)}
-            disabled={isSimulating}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition"
-            title="Inject a clean POS transaction to test real-time update"
-          >
-            <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
-            Simulate Clean Sale
-          </button>
-          <button
-            onClick={() => handleSimulateTransaction(true)}
-            disabled={isSimulating}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-rose-950/40 hover:bg-rose-900/40 text-rose-300 border border-rose-800/60 transition"
-            title="Inject a fraudulent transaction to trigger AI anti-fraud alarm"
-          >
-            <Flame className="w-3.5 h-3.5 text-rose-400" />
-            Simulate Fraud Attempt
-          </button>
-        </div>
       </div>
 
       {/* KPI Stats Grid */}
@@ -252,7 +194,7 @@ export const TransactionDashboard: React.FC = () => {
             <span>Completed Volume</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="mt-2 text-2xl font-bold text-white">${totalVolume.toFixed(2)}</div>
+          <div className="mt-2 text-2xl font-bold text-white">{formatIDR(totalVolume)}</div>
           <div className="text-xs text-zinc-500 mt-1">Verified sales across POS & PWA</div>
         </div>
 
@@ -452,11 +394,11 @@ export const TransactionDashboard: React.FC = () => {
                       {/* Amount */}
                       <td className="py-3 px-4">
                         <div className="font-semibold text-white text-sm">
-                          ${(tx.totalAmount || 0).toFixed(2)}
+                          {formatIDR(tx.totalAmount || 0)}
                         </div>
                         {tx.totalCost !== undefined && (
                           <div className="text-[11px] text-zinc-500">
-                            Margin: +${((tx.totalAmount || 0) - (tx.totalCost || 0)).toFixed(2)}
+                            Margin: +{formatIDR((tx.totalAmount || 0) - (tx.totalCost || 0))}
                           </div>
                         )}
                       </td>

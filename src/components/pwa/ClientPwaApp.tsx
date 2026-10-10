@@ -1,3 +1,4 @@
+import { assessOrder, writeFraudLog } from '../../services/fraudService';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   collection,
@@ -322,12 +323,12 @@ interface MemberProfile {
   verifiedAt: string | null;
 }
 
-const FONNTE_TOKEN = 'aFLkjgrJ2JnKclient-pwaxG1H7F5X';
-
 export const ClientPwaApp: React.FC = () => {
   // Navigation & Screen Flow State
   const [currentScreen, setCurrentScreen] = useState<PwaScreen>('splash');
-  const [deviceFrameMode, setDeviceFrameMode] = useState<boolean>(true); // Mobile Smartphone Mockup vs Full
+  // Mode demo (?demo=1): stepper loncat layar + bingkai HP. Di mode normal pelanggan hanya melihat aplikasi layar penuh.
+  const isDemoNav = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
+  const [deviceFrameMode, setDeviceFrameMode] = useState<boolean>(isDemoNav && typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>(INITIAL_PRODUCTS as Product[]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeCategory, setActiveCategory] = useState<string>('Semua');
@@ -354,7 +355,7 @@ export const ClientPwaApp: React.FC = () => {
   const [locationError, setLocationError] = useState<string | null>(null);
 
   // Fonnte WhatsApp OTP State (client-pwa41.jpeg)
-  const [otpCode, setOtpCode] = useState<string[]>(['', '', '', '']);
+  const [otpCode, setOtpCode] = useState<string[]>(['', '', '', '', '', '']);
   const [generatedOtp, setGeneratedOtp] = useState<string>('');
   const [isSendingOtp, setIsSendingOtp] = useState<boolean>(false);
   const [fonnteStatus, setFonnteStatus] = useState<{
@@ -379,6 +380,7 @@ export const ClientPwaApp: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<'qris' | 'cod' | 'transfer'>('qris');
   const [isOrderPlaced, setIsOrderPlaced] = useState<boolean>(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [placedTx, setPlacedTx] = useState<Transaction | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [formFeedbackMessage, setFormFeedbackMessage] = useState<string | null>(null);
@@ -479,7 +481,7 @@ export const ClientPwaApp: React.FC = () => {
   // Format Indonesian Rupiah
   const formatRupiah = (amount: number) => {
     // Demo price multiplier: if values are small (< 500) convert to typical IDR (x 15.000)
-    const effectiveVal = amount < 500 ? Math.round(amount * 15500) : amount;
+    const effectiveVal = amount;
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
@@ -515,7 +517,13 @@ export const ClientPwaApp: React.FC = () => {
         (pos) => {
           const lat = Number(pos.coords.latitude.toFixed(6));
           const lng = Number(pos.coords.longitude.toFixed(6));
-          const accuracy = Math.round(pos.coords.accuracy || 8);
+          const accuracy = Math.round(pos.coords.accuracy ?? -1);
+          if (accuracy > 50) {
+            setIsGpsLoading(false);
+            setLocationError(`Akurasi GPS terlalu rendah (±${accuracy} m). Pindah ke area terbuka lalu coba lagi (maksimal ±50 m).`);
+            setLocationStatusMessage('');
+            return;
+          }
 
           setMember((prev) => ({
             ...prev,
@@ -530,23 +538,10 @@ export const ClientPwaApp: React.FC = () => {
         },
         (err) => {
           console.warn('Geolocation warning/denied:', err);
-          // High-accuracy fallback coordinates (Central Jakarta benchmark for demo)
-          const fallbackLat = -6.2088;
-          const fallbackLng = 106.8456;
-          const fallbackAcc = 6;
-
-          setMember((prev) => ({
-            ...prev,
-            latitude: fallbackLat,
-            longitude: fallbackLng,
-            accuracy: fallbackAcc,
-            isLocationChecked: true,
-          }));
-
+          setMember((prev) => ({ ...prev, latitude: null, longitude: null, accuracy: null, isLocationChecked: false }));
           setIsGpsLoading(false);
-          setLocationStatusMessage(
-            `Izin browser dibatasi. Menggunakan sensor benchmark toko: ${fallbackLat}, ${fallbackLng} (Akurasi: ±${fallbackAcc}m).`
-          );
+          setLocationStatusMessage('');
+          setLocationError('Izin lokasi ditolak atau gagal. Aktifkan izin lokasi di browser, lalu tekan Cek Lokasi lagi.');
         },
         {
           enableHighAccuracy: true,
@@ -555,18 +550,9 @@ export const ClientPwaApp: React.FC = () => {
         }
       );
     } else {
-      // Browser does not support geolocation
-      const fallbackLat = -6.2088;
-      const fallbackLng = 106.8456;
-      setMember((prev) => ({
-        ...prev,
-        latitude: fallbackLat,
-        longitude: fallbackLng,
-        accuracy: 10,
-        isLocationChecked: true,
-      }));
       setIsGpsLoading(false);
-      setLocationStatusMessage('Sensor GPS tersambung (Benchmark Koordinat Toko).');
+      setLocationStatusMessage('');
+      setLocationError('Browser ini tidak mendukung GPS. Buka lewat Chrome atau Safari di ponsel.');
     }
   };
 
@@ -577,88 +563,78 @@ export const ClientPwaApp: React.FC = () => {
       return;
     }
 
-    // Auto-calibrate GPS if user hasn't explicitly clicked check location
+    // Lokasi wajib sudah dicek dan valid (tidak ada koordinat cadangan)
     if (!member.isLocationChecked || member.latitude === null || member.longitude === null) {
-      setMember((prev) => ({
-        ...prev,
-        latitude: -6.2088,
-        longitude: 106.8456,
-        accuracy: 8,
-        isLocationChecked: true,
-      }));
+      setFormFeedbackMessage('Cek lokasi dulu. Lokasi yang valid wajib untuk pendaftaran.');
+      return;
     }
 
     setFormFeedbackMessage(null);
-
-    // Generate 4-digit OTP
-    const newOtp = Math.floor(1000 + Math.random() * 9000).toString();
-    setGeneratedOtp(newOtp);
-    setOtpCode(['', '', '', '']);
+    setOtpCode(['', '', '', '', '', '']);
     setIsSendingOtp(true);
-    setOtpCountdown(60);
-    setOtpTimerActive(true);
 
-    // Call Fonnte WhatsApp API
+    // Kode dibuat dan dikirim oleh server; klien tidak pernah memegang token atau kode.
     try {
-      const res = await fetch('/api/fonnte/send-otp', {
+      const res = await fetch('/api/otp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: member.phone,
-          otp: newOtp,
-          customerName: member.name,
-          token: FONNTE_TOKEN,
-        }),
+        body: JSON.stringify({ phone: member.phone, customerName: member.name }),
       });
-
       const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFormFeedbackMessage(data.error || 'Gagal mengirim OTP. Coba lagi.');
+        return;
+      }
+      setGeneratedOtp(data.demoOtp || ''); // hanya terisi jika server memakai OTP_DEMO_ECHO=true
       setFonnteStatus({
         sent: true,
-        deliveredViaFonnte: data.deliveredViaFonnte || false,
+        deliveredViaFonnte: !!data.deliveredViaFonnte,
         detail: data.deliveredViaFonnte
-          ? 'Pesan WhatsApp berhasil dikirim ke nomor Anda via Fonnte.'
-          : 'Gateway Fonnte aktif. Gunakan kode verifikasi yang tertera untuk pengujian instan.',
+          ? 'Kode OTP dikirim ke WhatsApp Anda.'
+          : 'Mode demo: WhatsApp tidak aktif di server, kode ditampilkan di bawah.',
       });
+      setOtpCountdown(60);
+      setOtpTimerActive(true);
+      setCurrentScreen('verify_whatsapp');
     } catch (e) {
-      console.warn('Fonnte send exception:', e);
-      setFonnteStatus({
-        sent: true,
-        deliveredViaFonnte: false,
-        detail: 'Simulasi Fonnte aktif untuk pengujian verifikasi.',
-      });
+      console.warn('OTP send error:', e);
+      setFormFeedbackMessage('Server tidak terjangkau. Periksa koneksi lalu coba lagi.');
     } finally {
       setIsSendingOtp(false);
-      setCurrentScreen('verify_whatsapp');
     }
   };
 
   // STEP 6: VERIFIKASI KODE OTP
-  const handleVerifyOtp = () => {
+  const handleVerifyOtp = async () => {
     const entered = otpCode.join('');
-    const targetOtp = generatedOtp || '1234';
-    if (entered === targetOtp || entered === '1234' || entered.length === 4 || entered === '') {
-      // Success!
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 },
-      });
-
-      setMember((prev) => ({
-        ...prev,
-        isVerified: true,
-        verifiedAt: new Date().toLocaleTimeString('id-ID'),
-      }));
-
-      setFormFeedbackMessage(null);
-
-      // Navigate to Home Member (client-pwa6.jpeg)
-      setTimeout(() => {
-        setCurrentScreen('home_member');
-      }, 500);
-    } else {
-      setFormFeedbackMessage(`Kode OTP tidak sesuai. Gunakan kode pengujian instan: ${targetOtp}`);
+    if (!/^\d{6}$/.test(entered)) {
+      setFormFeedbackMessage('Masukkan 6 digit kode OTP.');
+      return;
     }
+    try {
+      const res = await fetch('/api/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: member.phone, code: entered }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.verified) {
+        setFormFeedbackMessage(data.error || 'Kode OTP tidak sesuai.');
+        return;
+      }
+    } catch (e) {
+      setFormFeedbackMessage('Server tidak terjangkau. Coba lagi.');
+      return;
+    }
+
+    confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+    setMember((prev) => ({
+      ...prev,
+      isVerified: true,
+      verifiedAt: new Date().toLocaleTimeString('id-ID'),
+    }));
+    setFormFeedbackMessage(null);
+    setTimeout(() => setCurrentScreen('home_member'), 500);
   };
 
   // STEP 8: BUKA KOTAK AI PEMESANAN (client-pwa7.jpeg)
@@ -859,7 +835,7 @@ export const ClientPwaApp: React.FC = () => {
   // Cart Subtotal Calculation
   const cartSubtotal = cart.reduce((sum, item) => {
     const price = item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit;
-    const effectivePrice = price < 500 ? price * 15500 : price;
+    const effectivePrice = price;
     return sum + effectivePrice * item.quantity;
   }, 0);
 
@@ -883,18 +859,17 @@ export const ClientPwaApp: React.FC = () => {
   // Place Order Checkout
   const handleConfirmOrder = async () => {
     if (cart.length === 0 || isPlacingOrder) return;
+    if (!member.isVerified) {
+      setCheckoutError('Verifikasi nomor WhatsApp Anda dulu sebelum memesan.');
+      return;
+    }
     setIsPlacingOrder(true);
 
-    try {
-      confetti({
-        particleCount: 100,
-        spread: 80,
-        origin: { y: 0.6 },
-      });
+    setCheckoutError(null);
 
+    try {
       const txItems: TransactionItem[] = cart.map((item, idx) => {
         const price = item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit;
-        const effectivePrice = price < 500 ? price * 15500 : price;
         return {
           id: `pwa-item-${Date.now()}-${idx}`,
           storeId: DEMO_STORE_ID,
@@ -904,65 +879,91 @@ export const ClientPwaApp: React.FC = () => {
           packageType: item.packageType,
           quantityOrdered: item.quantity,
           unitsDeducted: item.packageType === 'carton' ? item.quantity * item.product.piecesPerCarton : item.quantity,
-          unitPrice: effectivePrice,
-          subtotal: effectivePrice * item.quantity,
+          unitPrice: price,
+          subtotal: price * item.quantity,
         };
       });
+      const totalCost = Math.round(
+        cart.reduce((sum, item) => {
+          const units = item.packageType === 'carton' ? item.quantity * item.product.piecesPerCarton : item.quantity;
+          return sum + units * (item.product.costPerUnit || 0);
+        }, 0)
+      );
+
+      // Penilaian anti-fraud di server. Tanpa hasilnya, pesanan tidak disimpan.
+      let ai;
+      try {
+        ai = await assessOrder({
+          channel: 'pwa_client',
+          orderId: crypto.randomUUID(),
+          totalAmount: totalPayable,
+          items: txItems.map((i) => ({
+            productId: i.productId,
+            productName: i.productName,
+            packageType: i.packageType,
+            quantityOrdered: i.quantityOrdered,
+          })),
+          customerPhone: member.phone,
+          customerLatitude: member.latitude,
+          customerLongitude: member.longitude,
+          gpsAccuracy: member.accuracy,
+        });
+      } catch (e) {
+        setCheckoutError('Pesanan belum bisa diperiksa keamanannya. Periksa koneksi lalu coba lagi.');
+        return;
+      }
 
       const txPayload: Omit<Transaction, 'id'> = {
         storeId: DEMO_STORE_ID,
         channel: 'pwa_client',
-        customerName: member.name || 'Member PWA Terdaftar',
+        customerName: member.name || 'Member PWA',
         customerPhone: member.phone || '',
         totalAmount: totalPayable,
-        totalCost: Math.round(totalPayable * 0.7),
+        totalCost,
         paymentMethod: paymentMethod === 'qris' ? 'qris' : paymentMethod === 'cod' ? 'cash' : 'bank_transfer',
-        status: 'pending_approval',
-        fraudScore: 8,
-        fraudFlags: ['PWA_VERIFIED_MEMBER', 'HIGH_ACCURACY_GPS', 'FONNTE_WHATSAPP_VERIFIED'],
-        riskLevel: 'clean',
-        customerLatitude: member.latitude || DEFAULT_STORE_CONFIG.latitude,
-        customerLongitude: member.longitude || DEFAULT_STORE_CONFIG.longitude,
-        distanceToStoreMeters:
-          member.latitude && member.longitude
-            ? calculateDistanceToStore(member.latitude, member.longitude)
-            : 18,
-        gpsAccuracy: member.accuracy || 5,
-        isMockGpsSuspected: false,
-        aiExplanation: `Pesanan PWA Client dari ${member.name} (${cart.length} item) diverifikasi melalui WhatsApp Fonnte & koordinat GPS tervalidasi. Siap diproses sistem POS.`,
+        status: ai.recommendation === 'reject' ? 'rejected' : 'pending_approval',
+        fraudScore: ai.fraudScore,
+        fraudFlags: ai.fraudFlags,
+        riskLevel: ai.riskLevel,
+        customerLatitude: member.latitude ?? undefined,
+        customerLongitude: member.longitude ?? undefined,
+        distanceToStoreMeters: ai.distanceToStoreMeters ?? undefined,
+        gpsAccuracy: member.accuracy ?? undefined,
+        isMockGpsSuspected: ai.isMockGpsSuspected,
+        aiExplanation: ai.aiExplanation,
         items: txItems,
         createdAt: new Date().toISOString(),
       };
 
-      let finalTxId = `TRX-PWA-${Date.now().toString().slice(-6)}`;
+      let docRef;
       try {
-        const docRef = await addDoc(collection(db, 'transactions'), txPayload);
-        finalTxId = docRef.id;
-
-        // Save each item to items subcollection
+        docRef = await addDoc(collection(db, 'transactions'), txPayload);
         for (const item of txItems) {
-          try {
-            await addDoc(collection(db, 'transactions', docRef.id, 'items'), {
-              ...item,
-              transactionId: docRef.id,
-            });
-          } catch (e) {
-            console.warn('Subcollection item error:', e);
-          }
+          await addDoc(collection(db, 'transactions', docRef.id, 'items'), {
+            ...item,
+            transactionId: docRef.id,
+          });
         }
       } catch (firestoreErr) {
-        console.warn('Firestore transaction save fallback:', firestoreErr);
+        console.error('Gagal menyimpan pesanan:', firestoreErr);
+        setCheckoutError('Pesanan gagal disimpan. Coba lagi beberapa saat.');
+        return;
+      }
+      await writeFraudLog(docRef.id, ai);
+
+      if (ai.recommendation === 'reject') {
+        setCheckoutError('Pesanan ditolak oleh sistem keamanan. Hubungi toko jika ini keliru.');
+        return;
       }
 
-      const tx: Transaction = {
-        id: finalTxId,
-        ...txPayload,
-      };
-
-      setPlacedTx(tx);
+      try {
+        confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
+      } catch (e) {}
+      setPlacedTx({ id: docRef.id, ...txPayload });
       setIsOrderPlaced(true);
     } catch (err) {
       console.error('Error placing order:', err);
+      setCheckoutError('Terjadi kesalahan saat memproses pesanan.');
     } finally {
       setIsPlacingOrder(false);
     }
@@ -980,6 +981,7 @@ export const ClientPwaApp: React.FC = () => {
       {/* ============================================================ */}
       {/* TOP CONTROLS: BREADCRUMB FLOW STEPPER & VIEW MODE SWITCHER */}
       {/* ============================================================ */}
+      {isDemoNav && (
       <div className="w-full max-w-5xl mb-4 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3 sm:p-4 backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-3">
         {/* Step Indicator Flow (1 to 10 as specified by user) */}
         <div className="w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
@@ -1100,6 +1102,7 @@ export const ClientPwaApp: React.FC = () => {
           </button>
         </div>
       </div>
+      )}
 
       {/* ============================================================ */}
       {/* MAIN CONTAINER: SMARTPHONE FRAME OR FULL RESPONSIVE VIEW */}
@@ -1568,6 +1571,9 @@ export const ClientPwaApp: React.FC = () => {
                   )}
                 </button>
 
+                {locationError && (
+                  <p className="text-[11px] text-rose-400 font-semibold">{locationError}</p>
+                )}
                 {locationStatusMessage && (
                   <p className="text-[10px] text-zinc-400 italic">
                     {locationStatusMessage}
@@ -1736,6 +1742,9 @@ export const ClientPwaApp: React.FC = () => {
                 </button>
 
                 {/* Status Message */}
+                {locationError && (
+                  <div className="text-[11px] text-rose-300 bg-rose-950/40 p-2.5 rounded-xl border border-rose-800/60">{locationError}</div>
+                )}
                 {locationStatusMessage && (
                   <div className="text-[11px] text-zinc-300 bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 flex items-center gap-2">
                     <Radio className="w-3.5 h-3.5 text-emerald-400 animate-ping shrink-0" />
@@ -1860,7 +1869,7 @@ export const ClientPwaApp: React.FC = () => {
                   Masukkan Kode Verifikasi
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-xs leading-relaxed">
-                  Kode OTP 4-digit telah dikirimkan via WhatsApp ke nomor:
+                  Kode OTP 6-digit telah dikirimkan via WhatsApp ke nomor:
                 </p>
                 <div className="mt-1 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-mono font-bold text-emerald-400">
                   {member.phone}
@@ -1869,31 +1878,33 @@ export const ClientPwaApp: React.FC = () => {
                 {/* Gateway Detail Badge */}
                 <div className="mt-3 px-3 py-1.5 rounded-xl bg-zinc-900/80 border border-zinc-800 text-[10px] text-zinc-400 max-w-xs">
                   <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-semibold mb-0.5">
-                    <CheckCircle2 className="w-3 h-3" /> Fonnte Token: {FONNTE_TOKEN.slice(0, 10)}...
+                    <CheckCircle2 className="w-3 h-3" /> Gateway WhatsApp
                   </div>
                   <span>{fonnteStatus.detail || 'Gateway WhatsApp Fonnte Siap.'}</span>
                 </div>
 
                 {/* Demo Helper Pill (Biar penguji langsung tahu kodenya tanpa harus cek WA nyata) */}
+                {generatedOtp && (
                 <div className="mt-4 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center justify-between w-full max-w-xs">
                   <span className="text-[11px]">Kode OTP Verifikasi:</span>
                   <button
                     onClick={() => {
                       if (generatedOtp) {
                         const digits = generatedOtp.split('');
-                        setOtpCode([digits[0] || '1', digits[1] || '2', digits[2] || '3', digits[3] || '4']);
+                        setOtpCode([0, 1, 2, 3, 4, 5].map((k) => digits[k] || ''));
                       }
                     }}
                     className="font-mono font-black text-sm tracking-widest bg-emerald-500/20 px-2.5 py-0.5 rounded border border-emerald-500/40 hover:bg-emerald-500/30 transition cursor-pointer"
                     title="Klik untuk Isi Otomatis"
                   >
-                    {generatedOtp || '1234'} (Klik Isi)
+                    {generatedOtp} (Klik Isi)
                   </button>
                 </div>
+                )}
 
-                {/* 4 Digit OTP Inputs */}
+                {/* 6 Digit OTP Inputs */}
                 <div className="flex items-center justify-center gap-3 mt-6">
-                  {[0, 1, 2, 3].map((idx) => (
+                  {[0, 1, 2, 3, 4, 5].map((idx) => (
                     <input
                       key={idx}
                       id={`otp-${idx}`}
@@ -1907,7 +1918,7 @@ export const ClientPwaApp: React.FC = () => {
                         setOtpCode(newOtp);
 
                         // Auto-advance focus
-                        if (val && idx < 3) {
+                        if (val && idx < 5) {
                           const nextInput = document.getElementById(`otp-${idx + 1}`);
                           nextInput?.focus();
                         }
@@ -1918,7 +1929,7 @@ export const ClientPwaApp: React.FC = () => {
                           prevInput?.focus();
                         }
                       }}
-                      className="w-13 h-14 bg-zinc-900 border-2 border-zinc-800 focus:border-emerald-400 rounded-2xl text-center text-xl font-bold font-mono text-white focus:outline-none transition shadow-inner"
+                      className="w-11 h-14 bg-zinc-900 border-2 border-zinc-800 focus:border-emerald-400 rounded-2xl text-center text-xl font-bold font-mono text-white focus:outline-none transition shadow-inner"
                     />
                   ))}
                 </div>
@@ -2236,7 +2247,7 @@ export const ClientPwaApp: React.FC = () => {
               <button
                 onClick={() => setCurrentScreen('order_history')}
                 className={`flex flex-col items-center relative transition cursor-pointer ${
-                  currentScreen === 'order_history' ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-white'
+                  (currentScreen as string) === 'order_history' ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-white'
                 }`}
                 title={`Riwayat Pesanan (${userOrders.length} pesanan, ${activeOrdersCount} aktif)`}
               >
@@ -2447,7 +2458,7 @@ export const ClientPwaApp: React.FC = () => {
                     {cart.map((item, idx) => {
                       const isCarton = item.packageType === 'carton';
                       const unitPrice = isCarton ? item.product.pricePerCarton : item.product.pricePerUnit;
-                      const effectivePrice = unitPrice < 500 ? unitPrice * 15500 : unitPrice;
+                      const effectivePrice = unitPrice;
                       const subtotal = effectivePrice * item.quantity;
 
                       return (
@@ -2636,6 +2647,11 @@ export const ClientPwaApp: React.FC = () => {
             {/* Bottom Checkout Action */}
             {cart.length > 0 && (
               <div className="pt-3 border-t border-zinc-800">
+                {checkoutError && (
+                  <div className="mb-2 p-2.5 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-[11px] font-semibold">
+                    {checkoutError}
+                  </div>
+                )}
                 <button
                   onClick={handleConfirmOrder}
                   disabled={isPlacingOrder}

@@ -1,3 +1,6 @@
+import { formatByMode, USD_RATE } from '../../lib/money';
+import { assessOrder, writeFraudLog } from '../../services/fraudService';
+import { createSaleWithStock, deductStockForOrder } from '../../services/stockService';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   collection,
@@ -280,14 +283,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   }, []);
 
   // Format price helper (supports both IDR and USD scale)
-  const formatMoney = (val: number) => {
-    if (currencyMode === 'IDR') {
-      const idrVal = val > 1000 ? Math.round(val) : Math.round(val * 15000);
-      return `Rp ${idrVal.toLocaleString('id-ID')}`;
-    }
-    const usdVal = val > 1000 ? val / 15000 : val;
-    return `$${usdVal.toFixed(2)}`;
-  };
+  const formatMoney = (val: number) => formatByMode(val, currencyMode);
 
   // Categories list
   const categoryTabs = [
@@ -355,8 +351,8 @@ export const PosMachine: React.FC<PosMachineProps> = ({
 
   const total = subtotal;
   const cashGiven = Number(cashReceivedInput) || 0;
-  const change = Math.max(0, cashGiven - (currencyMode === 'IDR' ? Math.round(total * 15000) : total));
-  const remaining = Math.max(0, (currencyMode === 'IDR' ? Math.round(total * 15000) : total) - cashGiven);
+  const change = Math.max(0, cashGiven - (currencyMode === 'IDR' ? Math.round(total) : Number((total / USD_RATE).toFixed(2))));
+  const remaining = Math.max(0, (currencyMode === 'IDR' ? Math.round(total) : Number((total / USD_RATE).toFixed(2))) - cashGiven);
 
   // Numpad handlers
   const handleNumClick = (val: string) => {
@@ -380,7 +376,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   };
 
   const handleExactCash = () => {
-    const exact = currencyMode === 'IDR' ? Math.round(total * 15000) : Number(total.toFixed(2));
+    const exact = currencyMode === 'IDR' ? Math.round(total) : Number((total / USD_RATE).toFixed(2));
     setCashReceivedInput(String(exact));
   };
 
@@ -398,72 +394,72 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         unitPrice: c.packageType === 'carton' ? c.product.pricePerCarton : c.product.pricePerUnit,
       }));
 
-      // Call server AI anti-fraud
-      const aiRes = await fetch('/api/ai/anti-fraud', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Penilaian anti-fraud di server. Jika server tidak terjangkau, kasir diberi pilihan.
+      let ai: Awaited<ReturnType<typeof assessOrder>> | null = null;
+      try {
+        ai = await assessOrder({
           channel: 'pos',
+          orderId: crypto.randomUUID(),
           totalAmount: total,
           items: itemsPayload,
-          customerPhone: 'Walk-in Cashier Counter',
-          gpsAccuracy: 5,
-        }),
-      });
+          customerPhone: '',
+          gpsAccuracy: null,
+        });
+      } catch (e) {
+        const lanjut = window.confirm(
+          'Pemeriksaan anti-fraud tidak tersedia. Lanjutkan penjualan tanpa pemeriksaan AI? (akan ditandai AI_UNAVAILABLE)'
+        );
+        if (!lanjut) return;
+      }
 
-      const aiData = await aiRes.json();
+      const status: Transaction['status'] =
+        ai?.recommendation === 'reject' ? 'rejected' : ai?.recommendation === 'review' ? 'pending_approval' : 'completed';
+      if (status === 'rejected') {
+        window.alert(`Transaksi ditolak sistem anti-fraud (skor ${ai!.fraudScore}). ${ai!.aiExplanation}`);
+        return;
+      }
+
+      const totalCost = Math.round(
+        cart.reduce((sum, c) => {
+          const units = (c.packageType === 'carton' ? c.product.piecesPerCarton : 1) * c.quantity;
+          return sum + units * (c.product.costPerUnit || 0);
+        }, 0)
+      );
 
       const newTx: Omit<Transaction, 'id'> = {
         storeId: DEMO_STORE_ID,
         channel: 'pos',
         customerName: selectedCustomer,
         totalAmount: total,
-        totalCost: Number((total * 0.65).toFixed(2)),
+        totalCost,
         paymentMethod: paymentMethod === 'debt' ? 'card' : paymentMethod === 'cod' ? 'cash' : paymentMethod,
-        status: 'completed',
-        fraudScore: aiData.fraudScore || 5,
-        fraudFlags: aiData.fraudFlags || ['VERIFIED_POS_COUNTER'],
-        riskLevel: 'clean',
-        distanceToStoreMeters: 2,
-        gpsAccuracy: 5,
-        aiExplanation: 'In-store retail POS register sale authenticated by on-duty cashier.',
+        status,
+        fraudScore: ai?.fraudScore ?? 0,
+        fraudFlags: ai ? ai.fraudFlags : ['AI_UNAVAILABLE'],
+        riskLevel: ai?.riskLevel ?? 'warning',
+        aiExplanation: ai?.aiExplanation ?? 'Pemeriksaan AI tidak tersedia; kasir melanjutkan secara manual.',
         cashierId: 'cashier_rc_01',
         createdAt: new Date().toISOString(),
       };
 
-      const docRef = await addDoc(collection(db, 'transactions'), newTx);
-
-      // Save item lines
-      for (const item of cart) {
-        const itemSubtotal =
-          (item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit) *
-          item.quantity;
-        const unitsDeducted =
-          (item.packageType === 'carton' ? item.product.piecesPerCarton : 1) * item.quantity;
-
-        await addDoc(collection(db, 'transactions', docRef.id, 'items'), {
+      const lines = cart.map((item) => {
+        const unitPrice = item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit;
+        return {
           storeId: DEMO_STORE_ID,
-          transactionId: docRef.id,
           productId: item.product.id,
           productName: item.product.name,
           packageType: item.packageType,
           quantityOrdered: item.quantity,
-          unitsDeducted,
-          unitPrice: item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit,
-          subtotal: Number(itemSubtotal.toFixed(2)),
-        });
+          unitsDeducted: (item.packageType === 'carton' ? item.product.piecesPerCarton : 1) * item.quantity,
+          unitPrice,
+          subtotal: unitPrice * item.quantity,
+        };
+      });
 
-        // Deduct inventory
-        const prodRef = doc(db, 'products', item.product.id);
-        const currentProd = products.find((p) => p.id === item.product.id);
-        if (currentProd) {
-          const nextStock = Math.max(0, currentProd.stockInUnits - unitsDeducted);
-          await updateDoc(prodRef, {
-            stockInUnits: nextStock,
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      }
+      // Transaksi + item + pengurangan stok dalam satu transaksi atomik; gagal bila stok kurang.
+      const docRefId = await createSaleWithStock(newTx, lines);
+      if (ai) await writeFraudLog(docRefId, ai);
+      const docRef = { id: docRefId };
 
       setCompletedTxReceipt({
         id: docRef.id,
@@ -488,30 +484,22 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   const handlePwaAction = async (action: 'approve' | 'reject', targetOrder?: Transaction) => {
     const order = targetOrder || incomingPwaOrder;
     if (!order) return;
+    if (order.status === 'completed' || order.status === 'rejected') return; // sudah diproses
 
     try {
+      if (action === 'approve') {
+        // Stok dikurangi dulu (atomik, aman dipanggil dua kali). Gagal bila stok tidak cukup.
+        await deductStockForOrder(
+          order.id,
+          (order.items || []).map((it) => ({ productId: it.productId, units: Number(it.unitsDeducted) || 0 }))
+        );
+      }
       await updateDoc(doc(db, 'transactions', order.id), {
         status: action === 'approve' ? 'completed' : 'rejected',
         fulfillmentStatus: action === 'approve' ? 'completed' : 'pending',
         reviewedBy: 'Administrator',
         reviewedAt: new Date().toISOString(),
       });
-
-      // If approved, deduct inventory in Firestore products
-      if (action === 'approve' && order.items && order.items.length > 0) {
-        for (const it of order.items) {
-          const prodRef = doc(db, 'products', it.productId);
-          const currentProd = products.find((p) => p.id === it.productId);
-          if (currentProd) {
-            const unitsToDeduct = it.unitsDeducted || (it.packageType === 'carton' ? (currentProd.piecesPerCarton || 40) * it.quantityOrdered : it.quantityOrdered);
-            const nextStock = Math.max(0, currentProd.stockInUnits - unitsToDeduct);
-            await updateDoc(prodRef, {
-              stockInUnits: nextStock,
-              updatedAt: new Date().toISOString(),
-            });
-          }
-        }
-      }
 
       if (action === 'approve') {
         try {
@@ -540,6 +528,10 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         });
       }
     } catch (error) {
+      if (error instanceof Error && /Stok|Produk|Transaksi/.test(error.message)) {
+        window.alert(error.message);
+        return;
+      }
       handleFirestoreError(error, OperationType.UPDATE, `transactions/${order.id}`);
     }
   };
@@ -547,9 +539,19 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   // Update fulfillment stage from POS terminal
   const handleUpdateFulfillmentStage = async (orderId: string, stage: 'pending' | 'processing' | 'ready' | 'completed') => {
     try {
+      if (stage === 'completed') {
+        const ord = pwaOrdersQueue.find((o) => o.id === orderId);
+        if (ord && ord.status === 'rejected') return;
+        if (ord) {
+          await deductStockForOrder(
+            orderId,
+            (ord.items || []).map((it) => ({ productId: it.productId, units: Number(it.unitsDeducted) || 0 }))
+          );
+        }
+      }
       await updateDoc(doc(db, 'transactions', orderId), {
         fulfillmentStatus: stage,
-        status: stage === 'completed' ? 'completed' : 'pending_approval',
+        ...(stage === 'completed' ? { status: 'completed' } : {}),
         updatedAt: new Date().toISOString(),
       });
 
@@ -562,14 +564,14 @@ export const PosMachine: React.FC<PosMachineProps> = ({
       // Update state locally
       setIncomingPwaOrder((prev) =>
         prev && prev.id === orderId
-          ? { ...prev, fulfillmentStatus: stage, status: stage === 'completed' ? 'completed' : 'pending_approval' }
+          ? { ...prev, fulfillmentStatus: stage, status: stage === 'completed' ? 'completed' : prev.status }
           : prev
       );
 
       setPwaOrdersQueue((prev) =>
         prev.map((o) =>
           o.id === orderId
-            ? { ...o, fulfillmentStatus: stage, status: stage === 'completed' ? 'completed' : 'pending_approval' }
+            ? { ...o, fulfillmentStatus: stage, status: stage === 'completed' ? 'completed' : o.status }
             : o
         )
       );
@@ -578,11 +580,12 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         setSelectedPwaOrderModal({
           ...selectedPwaOrderModal,
           fulfillmentStatus: stage,
-          status: stage === 'completed' ? 'completed' : 'pending_approval',
+          status: stage === 'completed' ? 'completed' : selectedPwaOrderModal.status,
         });
       }
     } catch (err) {
       console.error('Error updating fulfillment stage:', err);
+      if (err instanceof Error && /^Stok|^Produk/.test(err.message)) window.alert(err.message);
     }
   };
 

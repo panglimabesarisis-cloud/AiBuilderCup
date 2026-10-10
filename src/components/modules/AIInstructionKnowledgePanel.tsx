@@ -19,6 +19,8 @@ import {
   Save,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 export interface KnowledgeItem {
   id: string;
@@ -49,30 +51,11 @@ export const AIInstructionKnowledgePanel: React.FC<AIInstructionKnowledgePanelPr
   const [isOpen, setIsOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<'instruction' | 'knowledge'>('instruction');
 
-  // Load from localStorage if present
-  const storageKeyPrompt = `riskcart_ai_instruction_${agentKey}`;
-  const storageKeyKnowledge = `riskcart_ai_knowledge_${agentKey}`;
+  // Knowledge disimpan di Firestore: ai_agents/{agentKey}. Server membacanya dan memasukkannya ke instruksi Gemini.
+  const agentRef = doc(db, 'ai_agents', agentKey);
 
-  const [instruction, setInstruction] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem(storageKeyPrompt);
-      if (saved) return saved;
-    } catch {
-      // ignore
-    }
-    return defaultInstruction;
-  });
-
-  const [knowledgeList, setKnowledgeList] = useState<KnowledgeItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(storageKeyKnowledge);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return defaultKnowledgeList;
-  });
-
+  const [instruction, setInstruction] = useState<string>(defaultInstruction);
+  const [knowledgeList, setKnowledgeList] = useState<KnowledgeItem[]>(defaultKnowledgeList);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [searchKnowledge, setSearchKnowledge] = useState('');
   const [isAddingKnowledge, setIsAddingKnowledge] = useState(false);
@@ -80,26 +63,45 @@ export const AIInstructionKnowledgePanel: React.FC<AIInstructionKnowledgePanelPr
   const [newCategory, setNewCategory] = useState('SOP & Aturan');
   const [newContent, setNewContent] = useState('');
 
-  // Persist instructions
-  const handleSaveInstruction = () => {
-    try {
-      localStorage.setItem(storageKeyPrompt, instruction);
-    } catch {
-      // ignore
-    }
-    setSaveSuccessMsg(t('instruction_saved', 'Instruksi berhasil disimpan dan disinkronkan ke AI!'));
+  useEffect(() => {
+    const unsub = onSnapshot(
+      agentRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const d: any = snap.data();
+        if (typeof d.systemPrompt === 'string' && d.systemPrompt) setInstruction(d.systemPrompt);
+        if (Array.isArray(d.knowledgeItems)) setKnowledgeList(d.knowledgeItems);
+      },
+      (err) => console.warn('ai_agents listener:', err)
+    );
+    return () => unsub();
+  }, [agentKey]);
+
+  const flash = (msg: string) => {
+    setSaveSuccessMsg(msg);
     setTimeout(() => setSaveSuccessMsg(null), 3000);
   };
 
+  const persist = async (patch: Record<string, unknown>, okMsg: string) => {
+    try {
+      await setDoc(
+        agentRef,
+        { name: agentTitle, role: agentRole, enabled: true, updatedAt: new Date().toISOString(), ...patch },
+        { merge: true }
+      );
+      flash(okMsg);
+    } catch (e) {
+      console.error('Gagal menyimpan ai_agents:', e);
+      flash('Gagal menyimpan ke database. Coba lagi.');
+    }
+  };
+
+  const handleSaveInstruction = () =>
+    persist({ systemPrompt: instruction }, t('instruction_saved', 'Instruksi tersimpan di database dan dipakai AI.'));
+
   const handleResetInstruction = () => {
     setInstruction(defaultInstruction);
-    try {
-      localStorage.setItem(storageKeyPrompt, defaultInstruction);
-    } catch {
-      // ignore
-    }
-    setSaveSuccessMsg('Instruksi dikembalikan ke standar SOP bawaan.');
-    setTimeout(() => setSaveSuccessMsg(null), 3000);
+    persist({ systemPrompt: defaultInstruction }, 'Instruksi dikembalikan ke standar SOP bawaan.');
   };
 
   const handleAddKnowledge = (e: React.FormEvent) => {
@@ -120,27 +122,17 @@ export const AIInstructionKnowledgePanel: React.FC<AIInstructionKnowledgePanelPr
 
     const updated = [newItem, ...knowledgeList];
     setKnowledgeList(updated);
-    try {
-      localStorage.setItem(storageKeyKnowledge, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    persist({ knowledgeItems: updated }, t('knowledge_added', 'Dokumen tersimpan di knowledge base AI.'));
 
     setNewTitle('');
     setNewContent('');
     setIsAddingKnowledge(false);
-    setSaveSuccessMsg(t('knowledge_added', 'Dokumen berhasil ditambahkan ke knowledge base!'));
-    setTimeout(() => setSaveSuccessMsg(null), 3000);
   };
 
   const handleDeleteKnowledge = (id: string) => {
     const updated = knowledgeList.filter((k) => k.id !== id);
     setKnowledgeList(updated);
-    try {
-      localStorage.setItem(storageKeyKnowledge, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    persist({ knowledgeItems: updated }, 'Dokumen dihapus dari knowledge base.');
   };
 
   const colorStyles = {

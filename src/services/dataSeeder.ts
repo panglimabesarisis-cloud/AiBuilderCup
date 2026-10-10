@@ -13,12 +13,12 @@ export const DEMO_STORE_ID = 'store_demo_01';
 export const DEFAULT_STORE_CONFIG: StoreConfig = {
   id: DEMO_STORE_ID,
   name: 'RiskCart Flagship Mart (AI Cup 2026)',
-  ownerEmail: 'panglimabesarisis@gmail.com',
+  ownerEmail: '',
   latitude: -6.2088, // Central Jakarta benchmark
   longitude: 106.8456,
   geofenceRadiusMeters: 500, // 500m boundary for verified high-trust checkout
   fraudThresholdScore: 65,
-  currency: 'USD',
+  currency: 'IDR',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -33,9 +33,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456001',
     piecesPerCarton: 24,
     stockInUnits: 96,
-    costPerUnit: 2.50,
-    pricePerUnit: 3.50,
-    pricePerCarton: 78.00,
+    costPerUnit: 39000,
+    pricePerUnit: 54000,
+    pricePerCarton: 1209000,
     minStockAlert: 24,
     imageUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=500&q=80',
   },
@@ -48,9 +48,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456002',
     piecesPerCarton: 24,
     stockInUnits: 72,
-    costPerUnit: 1.10,
-    pricePerUnit: 1.60,
-    pricePerCarton: 35.00,
+    costPerUnit: 17000,
+    pricePerUnit: 25000,
+    pricePerCarton: 542500,
     minStockAlert: 20,
     imageUrl: 'https://images.unsplash.com/photo-1546173159-315724a31696?auto=format&fit=crop&w=500&q=80',
   },
@@ -63,9 +63,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456003',
     piecesPerCarton: 24,
     stockInUnits: 48,
-    costPerUnit: 1.20,
-    pricePerUnit: 1.80,
-    pricePerCarton: 38.00,
+    costPerUnit: 18500,
+    pricePerUnit: 28000,
+    pricePerCarton: 589000,
     minStockAlert: 24,
     imageUrl: 'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?auto=format&fit=crop&w=500&q=80',
   },
@@ -78,9 +78,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456004',
     piecesPerCarton: 24,
     stockInUnits: 120,
-    costPerUnit: 0.85,
-    pricePerUnit: 1.25,
-    pricePerCarton: 27.00,
+    costPerUnit: 13000,
+    pricePerUnit: 19500,
+    pricePerCarton: 418500,
     minStockAlert: 30,
     imageUrl: 'https://images.unsplash.com/photo-1550258987-190a2d41a8ba?auto=format&fit=crop&w=500&q=80',
   },
@@ -93,9 +93,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456005',
     piecesPerCarton: 24,
     stockInUnits: 144, // 6 whole cartons
-    costPerUnit: 0.40,
-    pricePerUnit: 0.65,
-    pricePerCarton: 14.50,
+    costPerUnit: 6000,
+    pricePerUnit: 10000,
+    pricePerCarton: 225000,
     minStockAlert: 48,
     imageUrl: 'https://images.unsplash.com/photo-1572442388796-11668ba67e53?auto=format&fit=crop&w=500&q=80',
   },
@@ -108,9 +108,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456006',
     piecesPerCarton: 24,
     stockInUnits: 168,
-    costPerUnit: 0.50,
-    pricePerUnit: 0.80,
-    pricePerCarton: 17.50,
+    costPerUnit: 8000,
+    pricePerUnit: 12500,
+    pricePerCarton: 271000,
     minStockAlert: 40,
     imageUrl: 'https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=500&q=80',
   },
@@ -123,9 +123,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456007',
     piecesPerCarton: 1,
     stockInUnits: 35,
-    costPerUnit: 1.50,
-    pricePerUnit: 2.20,
-    pricePerCarton: 2.20,
+    costPerUnit: 23000,
+    pricePerUnit: 34000,
+    pricePerCarton: 34000,
     minStockAlert: 10,
     imageUrl: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?auto=format&fit=crop&w=500&q=80',
   },
@@ -138,9 +138,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456008',
     piecesPerCarton: 1,
     stockInUnits: 50,
-    costPerUnit: 1.20,
-    pricePerUnit: 1.90,
-    pricePerCarton: 1.90,
+    costPerUnit: 18500,
+    pricePerUnit: 29500,
+    pricePerCarton: 29500,
     minStockAlert: 15,
     imageUrl: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=500&q=80',
   },
@@ -153,9 +153,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '8998866200112',
     piecesPerCarton: 40,
     stockInUnits: 280, // = 7 whole cartons
-    costPerUnit: 0.35,
-    pricePerUnit: 0.55,
-    pricePerCarton: 20.00,
+    costPerUnit: 5500,
+    pricePerUnit: 8500,
+    pricePerCarton: 310000,
     minStockAlert: 80,
     imageUrl: 'https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=500&q=80',
   },
@@ -168,9 +168,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '8993388100223',
     piecesPerCarton: 24,
     stockInUnits: 144,
-    costPerUnit: 0.80,
-    pricePerUnit: 1.30,
-    pricePerCarton: 28.00,
+    costPerUnit: 12500,
+    pricePerUnit: 20000,
+    pricePerCarton: 434000,
     minStockAlert: 48,
     imageUrl: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=500&q=80',
   },
@@ -183,9 +183,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456009',
     piecesPerCarton: 24,
     stockInUnits: 96,
-    costPerUnit: 0.55,
-    pricePerUnit: 0.90,
-    pricePerCarton: 19.50,
+    costPerUnit: 8500,
+    pricePerUnit: 14000,
+    pricePerCarton: 302000,
     minStockAlert: 24,
     imageUrl: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=500&q=80',
   },
@@ -198,9 +198,9 @@ export const INITIAL_PRODUCTS: Omit<Product, 'createdAt' | 'updatedAt'>[] = [
     barcode: '899123456010',
     piecesPerCarton: 12,
     stockInUnits: 60,
-    costPerUnit: 1.20,
-    pricePerUnit: 1.75,
-    pricePerCarton: 19.80,
+    costPerUnit: 18500,
+    pricePerUnit: 27000,
+    pricePerCarton: 307000,
     minStockAlert: 24,
     imageUrl: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=500&q=80',
   },
@@ -212,8 +212,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     storeId: DEMO_STORE_ID,
     channel: 'pos',
     customerName: 'Marcus Vance',
-    totalAmount: 18.50,
-    totalCost: 11.20,
+    totalAmount: 287000,
+    totalCost: 173500,
     paymentMethod: 'qris',
     status: 'completed',
     fraudScore: 8,
@@ -234,8 +234,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
         packageType: 'unit',
         quantityOrdered: 10,
         unitsDeducted: 10,
-        unitPrice: 0.55,
-        subtotal: 5.50,
+        unitPrice: 8500,
+        subtotal: 85000,
       },
       {
         id: 'item_1001_2',
@@ -246,8 +246,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
         packageType: 'unit',
         quantityOrdered: 10,
         unitsDeducted: 10,
-        unitPrice: 1.30,
-        subtotal: 13.00,
+        unitPrice: 20000,
+        subtotal: 201500,
       },
     ],
   },
@@ -257,8 +257,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     channel: 'pwa_client',
     customerName: 'Sarah Jenkins',
     customerPhone: '+6281298837741',
-    totalAmount: 60.00,
-    totalCost: 42.00,
+    totalAmount: 930000,
+    totalCost: 651000,
     paymentMethod: 'card',
     status: 'completed',
     fraudScore: 22,
@@ -278,8 +278,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
         packageType: 'carton',
         quantityOrdered: 3, // 3 cartons = 120 units
         unitsDeducted: 120,
-        unitPrice: 20.00,
-        subtotal: 60.00,
+        unitPrice: 310000,
+        subtotal: 930000,
       },
     ],
   },
@@ -289,8 +289,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     channel: 'pwa_client',
     customerName: 'Shadow Buyer (Spoofed Device)',
     customerPhone: '+6289998881122',
-    totalAmount: 240.00,
-    totalCost: 168.00,
+    totalAmount: 3720000,
+    totalCost: 2604000,
     paymentMethod: 'bank_transfer',
     status: 'flagged_fraud',
     fraudScore: 92,
@@ -311,8 +311,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
         packageType: 'carton',
         quantityOrdered: 12,
         unitsDeducted: 480,
-        unitPrice: 20.00,
-        subtotal: 240.00,
+        unitPrice: 310000,
+        subtotal: 3720000,
       },
     ],
   },
@@ -322,8 +322,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     channel: 'pwa_client',
     customerName: 'Dian Permata',
     customerPhone: '+6285711223344',
-    totalAmount: 48.00,
-    totalCost: 33.00,
+    totalAmount: 744000,
+    totalCost: 511500,
     paymentMethod: 'qris',
     status: 'pending_approval',
     fraudScore: 68,
@@ -343,8 +343,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
         packageType: 'carton',
         quantityOrdered: 1,
         unitsDeducted: 30,
-        unitPrice: 48.00,
-        subtotal: 48.00,
+        unitPrice: 744000,
+        subtotal: 744000,
       },
     ],
   },
@@ -411,7 +411,29 @@ export async function seedDemoDataIfEmpty(): Promise<boolean> {
   }
 }
 
+async function deleteCollectionDocs(path: string[], withItems = false): Promise<void> {
+  const snap = await getDocs(collection(db, path[0], ...path.slice(1)));
+  let batch = writeBatch(db);
+  let n = 0;
+  for (const d of snap.docs) {
+    if (withItems) {
+      const items = await getDocs(collection(db, path[0], d.id, 'items'));
+      for (const it of items.docs) {
+        batch.delete(it.ref);
+        if (++n >= 400) { await batch.commit(); batch = writeBatch(db); n = 0; }
+      }
+    }
+    batch.delete(d.ref);
+    if (++n >= 400) { await batch.commit(); batch = writeBatch(db); n = 0; }
+  }
+  if (n > 0) await batch.commit();
+}
+
 export async function resetDatabaseWithFreshSeed(): Promise<void> {
+  // Hapus semua data operasional (termasuk data hasil uji) sebelum seed ulang.
+  await deleteCollectionDocs(['transactions'], true);
+  await deleteCollectionDocs(['fraud_logs']);
+  await deleteCollectionDocs(['products']);
   const batch = writeBatch(db);
   // Store
   batch.set(doc(db, 'stores', DEMO_STORE_ID), DEFAULT_STORE_CONFIG);

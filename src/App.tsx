@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { Navbar } from './components/common/Navbar';
 import { Sidebar } from './components/common/Sidebar';
 import { GlobalModals } from './components/common/GlobalModals';
@@ -38,8 +39,19 @@ import { PaymentIntegrationModule } from './components/modules/PaymentIntegratio
 import { LanguageProvider } from './context/LanguageContext';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>('pos_machine'); // Default to POS Machine
-  const [activeSubModule, setActiveSubModule] = useState<string>('ai_master');
+  // Routing berbasis URL: /admin/:tab/:sub? untuk dashboard, /clientpwa untuk aplikasi pelanggan.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const segs = location.pathname.split('/').filter(Boolean);
+  const isPwaRoute = segs[0] === 'clientpwa';
+  const activeTab = segs[0] === 'admin' && segs[1] ? segs[1] : 'pos_machine';
+  const activeSubModule = segs[0] === 'admin' && segs[2] ? segs[2] : '';
+  const navigateTo = (tab: string, sub?: string) => {
+    if (tab === 'client_pwa') return navigate('/clientpwa');
+    navigate(sub ? `/admin/${tab}/${sub}` : `/admin/${tab}`);
+  };
+  const setActiveTab = (tab: string) => navigateTo(tab);
+  const setActiveSubModule = (sub: string) => navigateTo(activeTab, sub);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [currencyMode, setCurrencyMode] = useState<'IDR' | 'USD'>('IDR');
@@ -58,10 +70,11 @@ export default function App() {
 
   useEffect(() => {
     // Automatically seed Firestore with initial demo catalog and transactions if empty
+    if (isPwaRoute) return; // pelanggan tidak boleh memicu seeding
     seedDemoDataIfEmpty().catch((err) => {
       console.warn('Initial seed error:', err);
     });
-  }, []);
+  }, [isPwaRoute]);
 
   const handleToggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -70,6 +83,25 @@ export default function App() {
       setIsSidebarCollapsed((prev) => !prev);
     }
   };
+
+  const VALID_TABS = new Set(['pos_machine','landing','admin_dashboard','transactions','assets','products','anti_fraud','restock','settings','module_ai','module_multi_outlet','module_shift','module_procurement','module_pos_transactions','module_inventory','module_customer','module_marketing','module_staff','module_finance','module_online_order','module_pwa_settings','module_pos_settings','module_payment']);
+  if (segs.length === 0 || (segs[0] !== 'admin' && segs[0] !== 'clientpwa')) {
+    return <Navigate to="/admin/pos_machine" replace />;
+  }
+  if (segs[0] === 'admin' && segs[1] === 'client_pwa') return <Navigate to="/clientpwa" replace />;
+  if (segs[0] === 'admin' && segs[1] && !VALID_TABS.has(segs[1])) {
+    return <Navigate to="/admin/pos_machine" replace />;
+  }
+  if (isPwaRoute) {
+    return (
+      <LanguageProvider>
+        <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
+          <ClientPwaApp />
+          <OfflineIndicator />
+        </div>
+      </LanguageProvider>
+    );
+  }
 
   return (
     <LanguageProvider>
@@ -94,6 +126,7 @@ export default function App() {
           }}
           activeSubModule={activeSubModule}
           setActiveSubModule={setActiveSubModule}
+          navigateTo={navigateTo}
           isCollapsed={isSidebarCollapsed}
           toggleCollapsed={() => setIsSidebarCollapsed((prev) => !prev)}
           isMobileOpen={isMobileSidebarOpen}
@@ -144,12 +177,12 @@ export default function App() {
                 )}
                 {activeTab === 'anti_fraud' && <AntiFraudInspector />}
                 {activeTab === 'restock' && <RestockAdvisor />}
-                {activeTab === 'client_pwa' && <ClientPwaApp />}
                 {activeTab === 'settings' && <PwaSettings />}
 
                 {/* NEW INTEGRATED MODULES (A - Q ARCHITECTURE) */}
                 {activeTab === 'module_ai' && (
                   <AIHubModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'ai_master'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -157,6 +190,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_multi_outlet' && (
                   <MultiOutletModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'lihat_outlet'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -164,6 +198,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_shift' && (
                   <ShiftModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'cashir'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -171,6 +206,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_procurement' && (
                   <ProcurementModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'daftar_supplier'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -178,6 +214,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_pos_transactions' && (
                   <POSTransactionsModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'transaksi_penjualan'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -185,6 +222,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_inventory' && (
                   <InventoryTrackingModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'inventory'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -192,6 +230,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_customer' && (
                   <CustomerModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'daftar_pelanggan'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -199,6 +238,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_marketing' && (
                   <MarketingModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'hadiah_target'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -206,6 +246,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_staff' && (
                   <StaffModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'daftar_staff'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -213,6 +254,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_finance' && (
                   <FinanceModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'bangkas_toko'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -220,6 +262,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_online_order' && (
                   <OnlineOrderModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'website_setting'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -227,6 +270,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_pwa_settings' && (
                   <PWASettingsModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'umum'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -234,6 +278,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_pos_settings' && (
                   <POSSettingsModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'umum'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}
@@ -241,6 +286,7 @@ export default function App() {
                 )}
                 {activeTab === 'module_payment' && (
                   <PaymentIntegrationModule
+                    key={activeSubModule}
                     subModule={activeSubModule as any || 'xendit'}
                     onNavigateTab={setActiveTab}
                     currencyMode={currencyMode}

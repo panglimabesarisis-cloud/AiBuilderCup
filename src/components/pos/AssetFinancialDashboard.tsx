@@ -1,3 +1,4 @@
+import { formatIDR } from '../../lib/money';
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
@@ -145,7 +146,7 @@ export const AssetFinancialDashboard: React.FC = () => {
           <div className="w-full bg-zinc-950 p-3 rounded-xl border border-zinc-800/80 text-xs text-zinc-400 flex items-center justify-between mt-2">
             <div className="text-left">
               <div className="text-zinc-500 text-[10px] uppercase font-bold">Value At Risk (VAR)</div>
-              <div className="text-sm font-bold text-rose-400">${valueAtRisk.toFixed(2)}</div>
+              <div className="text-sm font-bold text-rose-400">{formatIDR(valueAtRisk)}</div>
             </div>
             <div className="text-right">
               <div className="text-zinc-500 text-[10px] uppercase font-bold">Active Shield</div>
@@ -164,18 +165,18 @@ export const AssetFinancialDashboard: React.FC = () => {
 
             <div className="mt-4">
               <div className="text-xs text-zinc-500 uppercase font-semibold">Total Retail Value</div>
-              <div className="text-3xl font-black text-white mt-1">${totalInventoryRetail.toFixed(2)}</div>
+              <div className="text-3xl font-black text-white mt-1">{formatIDR(totalInventoryRetail)}</div>
             </div>
 
             <div className="mt-4 pt-4 border-t border-zinc-800 grid grid-cols-2 gap-3 text-xs">
               <div>
                 <span className="text-zinc-500 block">Wholesale Cost (COGS)</span>
-                <span className="font-semibold text-zinc-300 font-mono">${totalInventoryCost.toFixed(2)}</span>
+                <span className="font-semibold text-zinc-300 font-mono">{formatIDR(totalInventoryCost)}</span>
               </div>
               <div>
                 <span className="text-zinc-500 block">Gross Margin Potential</span>
                 <span className="font-semibold text-emerald-400 font-mono">
-                  +${projectedMargin.toFixed(2)} ({marginPercentage}%)
+                  +{formatIDR(projectedMargin)} ({marginPercentage}%)
                 </span>
               </div>
             </div>
@@ -200,17 +201,17 @@ export const AssetFinancialDashboard: React.FC = () => {
 
             <div className="mt-4">
               <div className="text-xs text-zinc-500 uppercase font-semibold">Gross Realized Revenue</div>
-              <div className="text-3xl font-black text-emerald-400 mt-1">${realizedRevenue.toFixed(2)}</div>
+              <div className="text-3xl font-black text-emerald-400 mt-1">{formatIDR(realizedRevenue)}</div>
             </div>
 
             <div className="mt-4 pt-4 border-t border-zinc-800 grid grid-cols-2 gap-3 text-xs">
               <div>
                 <span className="text-zinc-500 block">Realized COGS Cost</span>
-                <span className="font-semibold text-zinc-300 font-mono">${realizedCOGS.toFixed(2)}</span>
+                <span className="font-semibold text-zinc-300 font-mono">{formatIDR(realizedCOGS)}</span>
               </div>
               <div>
                 <span className="text-zinc-500 block">Net Gross Profit</span>
-                <span className="font-semibold text-emerald-400 font-mono">+${netGrossProfit.toFixed(2)}</span>
+                <span className="font-semibold text-emerald-400 font-mono">+{formatIDR(netGrossProfit)}</span>
               </div>
             </div>
           </div>
@@ -267,12 +268,12 @@ export const AssetFinancialDashboard: React.FC = () => {
                       <span className="font-semibold text-white">{p.stockInUnits} units</span>
                       <span className="text-zinc-500 ml-1.5 font-mono">({cartons} cartons)</span>
                     </td>
-                    <td className="py-3 px-4 text-xs font-mono text-zinc-300">${assetCost.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-xs font-mono text-zinc-300">{formatIDR(assetCost)}</td>
                     <td className="py-3 px-4 text-xs font-mono text-white font-semibold">
-                      ${assetRetail.toFixed(2)}
+                      {formatIDR(assetRetail)}
                     </td>
                     <td className="py-3 px-4 text-xs font-mono text-emerald-400 text-right font-semibold">
-                      +${margin.toFixed(2)}
+                      +{formatIDR(margin)}
                     </td>
                   </tr>
                 );

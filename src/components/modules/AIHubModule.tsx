@@ -349,27 +349,26 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
     );
   };
 
-  const handleRunAgentSandboxTest = (agent: any) => {
+  const handleRunAgentSandboxTest = async (agent: any) => {
     const query = agentTestInputs[agent.id] || 'Lakukan audit otomatis pada pesanan POS terakhir';
     setAgentIsTesting((prev) => ({ ...prev, [agent.id]: true }));
-
-    setTimeout(() => {
-      let outputText = '';
-      if (agent.id === 'agent_1') {
-        outputText = `[Anti-Fraud Sentinel] Latency: 142ms\nSTATUS: VERIFIED SECURE\n- Geofence Distance: 42.1m (Radius Batas: 500m)\n- Mock GPS Detector: False (Hardware GPS Source)\n- Risk Score: 0.02 (Sangat Aman)\n- Rekomendasi: Transaksi dipersilakan diproses.`;
-      } else if (agent.id === 'agent_2') {
-        outputText = `[Order Parser] Input: "${query}"\n- Terdeteksi: Indomie Mi Goreng Special (Dus: 2x, 80 pcs)\n- Package Type: Carton Wholesale\n- Total Estimasi: Rp 260.000\n- Confidence: 99.4%`;
-      } else if (agent.id === 'agent_3') {
-        outputText = `[Restock Advisor] SKU: Aqua 600ml Botol Dus\n- Sisa Fisik: 3 Karton\n- Proyeksi Habis: 1.5 Hari\n- Rekomendasi PO: 25 Karton ke Distributor Utama (Estimasi modal: Rp 1.800.000). Draft PO dibuat.`;
-      } else if (agent.id === 'agent_5') {
-        outputText = `[Pricing Optimizer] Margin Analysis\n- Harga Beli Grosir: Rp 118.000/dus\n- Rekomendasi Jual Dus: Rp 130.000 (Margin 9.2%)\n- Rekomendasi Jual Eceran: Rp 3.500/pcs (Margin 18.6%)\n- Validasi Margin: Aman & Kompetitif.`;
-      } else {
-        outputText = `[${agent.name}] Inferensi Selesai (${agent.latencyMs}ms)\nModel: ${agent.model} | Tools Digunakan: ${agent.allowedTools.slice(0, 2).join(', ')}\nQuery: "${query}"\nHasil: Pemrosesan agen tuntas dengan kepatuhan isolasi data multi-outlet RiskCart.`;
-      }
-
-      setAgentTestOutputs((prev) => ({ ...prev, [agent.id]: outputText }));
-      setAgentIsTesting((prev) => ({ ...prev, [agent.id]: false }));
-    }, 450);
+    let outputText: string;
+    try {
+      const started = Date.now();
+      const res = await fetch('/api/ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: `[${agent.name}] ${query}` }),
+      });
+      const data = await res.json();
+      outputText = res.ok
+        ? `[${agent.name}] Respons nyata dari server (${Date.now() - started} ms, AI ${data.aiAvailable ? 'aktif' : 'tidak aktif'})\n${data.answer}`
+        : data.error || 'Server menolak permintaan.';
+    } catch (e) {
+      outputText = 'Server tidak terjangkau.';
+    }
+    setAgentTestOutputs((prev) => ({ ...prev, [agent.id]: outputText }));
+    setAgentIsTesting((prev) => ({ ...prev, [agent.id]: false }));
   };
 
   const handleCreateNewAgent = (e: React.FormEvent) => {
@@ -1000,27 +999,20 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
     if (!customText) setInputQuestion('');
     setIsAsking(true);
 
-    setTimeout(() => {
-      let answer = `Berdasarkan database RiskCart Outlet 1:\n`;
-      const q = questionText.toLowerCase();
-
-      if (q.includes('stok') || q.includes('dus') || q.includes('po') || q.includes('kritis')) {
-        answer += `📦 Status Stok Fisik Kritis:\n• Es Teler Cup: 0 Karton (Habis Total)\n• Good Day Coffee Dus: 0 Karton (Habis Total)\n• Aspen Mineral 600ml: Sisa 2 Karton (Batas Minimum: 5 Karton)\n\n💡 Tindakan: Disarankan segera membuat PO Replenishment ke PT Indomarco sebanyak 25 Karton. Estimasi modal: Rp 1.820.000.`;
-      } else if (q.includes('laba') || q.includes('untung') || q.includes('omset') || q.includes('profit')) {
-        answer += `📊 Realisasi Finansial Hari Ini:\n• Total Omset: Rp 4.850.000\n• Gross Profit: Rp 1.540.000 (Margin 31.7%)\n• Kategori Kontributor Tertinggi: Minuman Kemasan Dus (42% dari total profit)\n• Transaksi Tunai Kasir: Rp 2.950.000 | QRIS: Rp 1.900.000.`;
-      } else if (q.includes('kasir') || q.includes('selisih') || q.includes('kas')) {
-        answer += `🚨 Audit Kasir Shift 1:\n• Modal Kas Awal: Rp 500.000\n• Penjualan Tunai Sistem: Rp 2.950.000\n• Kas Keluar (Beli Es Batu): Rp 25.000\n• Fisik Laci Kasir: Rp 3.425.000\n• Selisih Kas: TEPAT Rp 0 (100% Cocok). Tidak ditemukan anomali laci kasir.`;
-      } else if (q.includes('kasbon') || q.includes('piutang') || q.includes('tempo')) {
-        answer += `⏱️ Piutang Kasbon Pelanggan:\n• Total Kasbon Aktif: Rp 1.450.000\n• Jatuh Tempo (>14 hari): Toko Berkah Mandiri (Rp 850.000)\n• Rekomendasi AI: Sistem otomatis mengunci fasilitas tempo di PWA sampai tagihan dilunasi.`;
-      } else if (q.includes('diskon') || q.includes('grosir') || q.includes('promo')) {
-        answer += `💡 Rekomendasi Diskon Grosir:\n• Berikan potongan 3% untuk pembelian di atas 5 karton Indomie Mi Goreng.\n• Buat promo bundling: 1 Dus Le Minerale + 1 Dus Kopi Good Day hemat Rp 6.000.\n• Margin toko tetap aman di 24.5%.`;
-      } else {
-        answer += `Sistem beroperasi normal: 10 AI Agents aktif, Geofencing radius 500m berjalan, tidak ada transaksi penipuan terdeteksi dalam 1 jam terakhir.`;
-      }
-
-      setChatMessages((prev) => [...prev, { sender: 'ai', text: answer, time: timeNow }]);
-      setIsAsking(false);
-    }, 600);
+    let answer: string;
+    try {
+      const res = await fetch('/api/ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: questionText }),
+      });
+      const data = await res.json();
+      answer = res.ok ? data.answer : data.error || 'Gagal mengambil jawaban dari server.';
+    } catch (e) {
+      answer = 'Server tidak terjangkau. Periksa koneksi lalu coba lagi.';
+    }
+    setChatMessages((prev) => [...prev, { sender: 'ai', text: answer, time: timeNow }]);
+    setIsAsking(false);
   };
 
   // Knowledge Base State

@@ -189,12 +189,7 @@ export const CustomerOrderHistoryModal: React.FC<CustomerOrderHistoryModalProps>
   const [viewAllDemo, setViewAllDemo] = useState<boolean>(false);
 
   // Currency helper
-  const formatMoney = (val: number) => {
-    if (val > 1000) {
-      return `Rp ${Math.round(val).toLocaleString('id-ID')}`;
-    }
-    return `$${val.toFixed(2)}`;
-  };
+  const formatMoney = (val: number) => `Rp ${Math.round(val).toLocaleString('id-ID')}`;
 
   // Real-time listener for customer's PWA orders from transactions collection
   useEffect(() => {
@@ -687,64 +682,6 @@ export const CustomerOrderHistoryModal: React.FC<CustomerOrderHistoryModalProps>
                   </div>
                 </div>
 
-                {/* Real-time Status Simulator Buttons (For demo & testing live fulfillment transitions) */}
-                <div className="pt-3 border-t border-zinc-850 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] text-zinc-400 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Uji Status Kasir Real-Time:</span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleSimulateStageChange('pending')}
-                      disabled={isUpdatingStatus || currentInfo.status === 'pending'}
-                      className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                        currentInfo.status === 'pending'
-                          ? 'bg-amber-500 text-zinc-950 font-black'
-                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                      }`}
-                      title="Set status to Pending"
-                    >
-                      1. Pending
-                    </button>
-                    <button
-                      onClick={() => handleSimulateStageChange('processing')}
-                      disabled={isUpdatingStatus || currentInfo.status === 'processing'}
-                      className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                        currentInfo.status === 'processing'
-                          ? 'bg-blue-600 text-white font-black'
-                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                      }`}
-                      title="Set status to Processing"
-                    >
-                      2. Processing
-                    </button>
-                    <button
-                      onClick={() => handleSimulateStageChange('ready')}
-                      disabled={isUpdatingStatus || currentInfo.status === 'ready'}
-                      className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                        currentInfo.status === 'ready'
-                          ? 'bg-indigo-600 text-white font-black'
-                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                      }`}
-                      title="Set status to Ready"
-                    >
-                      3. Ready
-                    </button>
-                    <button
-                      onClick={() => handleSimulateStageChange('completed')}
-                      disabled={isUpdatingStatus || currentInfo.status === 'completed'}
-                      className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                        currentInfo.status === 'completed'
-                          ? 'bg-emerald-600 text-white font-black'
-                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                      }`}
-                      title="Set status to Completed"
-                    >
-                      4. Completed
-                    </button>
-                  </div>
-                </div>
 
                 {/* Location & Geofence GPS Details */}
                 <div className="pt-3 border-t border-zinc-850 flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400">
