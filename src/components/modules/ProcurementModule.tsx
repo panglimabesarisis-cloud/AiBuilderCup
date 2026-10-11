@@ -156,7 +156,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
 
   // Modal State for New Purchase
   const [showPOModal, setShowPOModal] = useState(false);
-  const [selectedSupplier, setSelectedSupplier] = useState(suppliers[0].name);
+  const [selectedSupplier, setSelectedSupplier] = useState(suppliers[0]?.name ?? '');
   const [poProduct, setPoProduct] = useState('Indomie Mi Goreng Special (Dus)');
   const [poCartons, setPoCartons] = useState(10);
   const [poPricePerCarton, setPoPricePerCarton] = useState(115000);
