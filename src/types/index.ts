@@ -112,3 +112,44 @@ export interface CartItem {
   packageType: PackageType;
   quantity: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* Product Bundles (Paket Produk)                                      */
+/* ------------------------------------------------------------------ */
+
+/** One product line inside a bundle. All prices are per unit, in IDR, snapshotted when the bundle is saved. */
+export interface BundleItem {
+  productId: string;
+  productName: string;
+  sku: string;
+  unit: string;
+  qty: number;
+  costPrice: number; // purchase / COGS price per unit
+  sellingPrice: number; // standard retail price per unit
+  promoPrice: number; // bundle price per unit
+}
+
+export interface Bundle {
+  id: string;
+  storeId: string;
+  code: string; // unique, human readable (e.g. BUNDLE-01)
+  name: string;
+  items: BundleItem[];
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  quota: number; // max redemptions
+  redeemedCount: number;
+  isActive: boolean;
+  currency: 'IDR';
+  totalCost: number;
+  totalStandardPrice: number;
+  totalPromoPrice: number;
+  totalDiscount: number;
+  profit: number;
+  marginPercent: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A bundle as written to Firestore (id and createdAt are assigned by the service). */
+export type BundleDraft = Omit<Bundle, 'id' | 'storeId' | 'createdAt' | 'updatedAt' | 'redeemedCount' | 'isActive' | 'currency'>;

@@ -35,10 +35,12 @@ import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { collection, onSnapshot, doc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { DEMO_STORE_ID } from '../../services/dataSeeder';
 import { AddProductForm } from './AddProductForm';
+import { ProductBundles } from './bundles/ProductBundles';
 
 export type ProductCartonTabType =
   | 'list'
-  | 'paket'
+  | 'paket' // Product Bundles (Paket Produk)
+  | 'carton' // Carton / wholesale packages (previous Paket Produk content)
   | 'kategori'
   | 'harga_diskon'
   | 'masuk'
@@ -648,6 +650,11 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
     );
   }
 
+  // Paket Produk = Product Bundles sub-module (own breadcrumb, filters and add/edit views)
+  if (activeTab === 'paket') {
+    return <ProductBundles onBackToProducts={() => setActiveTab('list')} />;
+  }
+
   return (
     <div className="w-full space-y-4 font-sans select-none pb-12">
       {/* Toast Notification */}
@@ -750,11 +757,27 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             </span>
           </button>
 
-          {/* 2. Paket Produk */}
+          {/* 2. Paket Produk (Product Bundles). It opens its own full page, so this pill is never the active tab here. */}
           <button
             onClick={() => setActiveTab('paket')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
-              activeTab === 'paket'
+              isDark
+                ? 'hover:text-white hover:bg-zinc-800/50'
+                : 'hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Paket Produk</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/20 text-white font-mono">
+              Bundles
+            </span>
+          </button>
+
+          {/* 2b. Dus / Karton (wholesale carton packages) */}
+          <button
+            onClick={() => setActiveTab('carton')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'carton'
                 ? isDark
                   ? 'bg-amber-600 text-white shadow-sm'
                   : 'bg-amber-600 text-white shadow-xs'
@@ -763,11 +786,8 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                 : 'hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Layers className="w-4 h-4" />
-            <span>Paket Produk</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/20 text-white font-mono">
-              Dus / Karton
-            </span>
+            <Boxes className="w-4 h-4" />
+            <span>Dus / Karton</span>
           </button>
 
           {/* 3. Kategori dan Brand */}
@@ -1452,7 +1472,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
       {/* ========================================================================= */}
       {/* 2. TAB: PAKET PRODUK (Konversi Dus / Karton, Grosir, & Bundling Multi-Pack) */}
       {/* ========================================================================= */}
-      {activeTab === 'paket' && (
+      {activeTab === 'carton' && (
         <div className="space-y-4 animate-in fade-in">
           {/* Header & KPI Summary */}
           <div
