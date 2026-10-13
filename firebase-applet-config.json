@@ -1,12 +1,10 @@
 {
-  "projectId": "newpromohass",
-  "appId": "1:1099294607917:web:54889c095630fcbbb146a4",
-  "apiKey": "AIzaSyBG6Q84awPseYfCNmUTpmWjqeIYxTaU_Go",
-  "authDomain": "newpromohass.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-remixremixremixr-7692b7e9-2666-4a30-8855-b9fb3d913550",
-  "storageBucket": "newpromohass.firebasestorage.app",
-  "messagingSenderId": "1099294607917",
-  "measurementId": "G-Q3GG1QYQ0Q",
-  "oAuthClientId": "1099294607917-a1kr1pv6ub87lub34h7alcvmgjogqsd9.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "projectId": "aibuildercupv1-b578a",
+  "appId": "1:458340736986:web:af889dbdf66336ada76ae3",
+  "apiKey": "AIzaSyAYoJiPYkuTqRa9dU2LU0jwMsBQkuonESU",
+  "authDomain": "aibuildercupv1-b578a.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "aibuildercupv1-b578a.firebasestorage.app",
+  "messagingSenderId": "458340736986",
+  "measurementId": "G-JH86Y586SD"
 }
