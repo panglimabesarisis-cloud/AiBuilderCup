@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -13,6 +13,7 @@ import {
   QrCode,
   RotateCcw,
   Image as ImageIcon,
+  Upload,
   DollarSign,
   TrendingUp,
   Boxes,
@@ -23,7 +24,10 @@ import {
   Tag,
   Hash,
 } from 'lucide-react';
+import { collection, addDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { ProductGroupItem, ProductVariantItem } from './ProductCartonManager';
+import { useLanguage, USD_TO_IDR_RATE } from '../../context/LanguageContext';
 
 interface AddProductFormProps {
   isDark: boolean;
@@ -31,6 +35,7 @@ interface AddProductFormProps {
   onSubmit: (product: ProductGroupItem) => void;
   onToggleTheme: (theme: 'dark' | 'light') => void;
   onSaveAndAddAnother?: (product: ProductGroupItem) => void;
+  initialProduct?: any;
 }
 
 export const AddProductForm: React.FC<AddProductFormProps> = ({
@@ -39,36 +44,185 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
   onSubmit,
   onToggleTheme,
   onSaveAndAddAnother,
+  initialProduct,
 }) => {
+  const { language, t, currencyMode, formatCurrency } = useLanguage();
+
+  // Currency conversion helpers
+  const currencySymbol = currencyMode === 'USD' ? '$' : 'Rp';
+  const priceStep = currencyMode === 'USD' ? '0.01' : '500';
+  const cartonPriceStep = currencyMode === 'USD' ? '0.1' : '1000';
+
+  const toDisplayValue = (valInIdr: number): number | string => {
+    if (currencyMode === 'USD') {
+      const usd = valInIdr / USD_TO_IDR_RATE;
+      return Number(usd.toFixed(2));
+    }
+    return Math.round(valInIdr);
+  };
+
+  const parseInputToIdr = (displayVal: number | string): number => {
+    const num = Number(displayVal) || 0;
+    if (currencyMode === 'USD') {
+      return Math.round(num * USD_TO_IDR_RATE);
+    }
+    return Math.round(num);
+  };
+
   // Form fields: Informasi Dasar
-  const [productName, setProductName] = useState('');
-  const [sku, setSku] = useState('P' + Math.floor(100 + Math.random() * 900));
-  const [category, setCategory] = useState('MINERAL');
-  const [brand, setBrand] = useState('');
-  const [unit, setUnit] = useState('Pcs');
-  const [description, setDescription] = useState('');
+  const [productName, setProductName] = useState(initialProduct?.name || '');
+  const [sku, setSku] = useState(initialProduct?.sku || ('P' + Math.floor(100 + Math.random() * 900)));
+  const [category, setCategory] = useState(initialProduct?.category || 'MINERAL');
+  const [brand, setBrand] = useState(initialProduct?.brand || '');
+  const [unit, setUnit] = useState(initialProduct?.unit || 'Pcs');
+  const [description, setDescription] = useState(initialProduct?.description || '');
+
+  // Image Upload state
+  const [uploadedImage, setUploadedImage] = useState<string | null>(initialProduct?.imageUrl || null);
+  const [uploadedImageName, setUploadedImageName] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        showFlash(
+          language === 'id'
+            ? 'Ukuran gambar melebihi batas 5MB!'
+            : 'Image size exceeds 5MB limit!'
+        );
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        setUploadedImage(result);
+        setUploadedImageName(file.name);
+        showFlash(
+          language === 'id'
+            ? `Gambar "${file.name}" berhasil diunggah!`
+            : `Image "${file.name}" uploaded successfully!`
+        );
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // Preset Image selection
-  const [selectedPresetImage, setSelectedPresetImage] = useState<string>('💧 Aqua Botol');
+  const [selectedPresetImage, setSelectedPresetImage] = useState<string>('💧 Aqua Bottle');
 
-  // Form fields: Harga & Pajak
-  const [costPrice, setCostPrice] = useState<number>(20000);
-  const [sellPrice, setSellPrice] = useState<number>(25000);
-  const [posPrice, setPosPrice] = useState<number>(25000);
-  const [pwaPrice, setPwaPrice] = useState<number>(25000);
+  // Form fields: Pricing & Tax
+  const initialCost = initialProduct?.costPrice ?? initialProduct?.costPerUnit ?? 20000;
+  const initialSell = initialProduct?.price ?? initialProduct?.sellPrice ?? initialProduct?.pricePerUnit ?? 25000;
+  const initialStock = initialProduct?.stock ?? initialProduct?.stockInUnits ?? 50;
+  const initialMinStock = initialProduct?.minStockAlert ?? initialProduct?.minStock ?? 10;
+  const initialCartonPcs = initialProduct?.piecesPerCarton ?? initialProduct?.itemsPerCarton ?? 24;
+  const initialCartonWholesale = initialProduct?.pricePerCarton ?? 550000;
+
+  const [costPrice, setCostPrice] = useState<number>(initialCost);
+  const [sellPrice, setSellPrice] = useState<number>(initialSell);
+  const [posPrice, setPosPrice] = useState<number>(initialProduct?.posPrice ?? initialSell);
+  const [pwaPrice, setPwaPrice] = useState<number>(initialProduct?.pwaPrice ?? initialSell);
   const [taxMode, setTaxMode] = useState<'none' | 'ppn11' | 'inclusive'>('none');
   const [autoSyncPrices, setAutoSyncPrices] = useState(true);
 
-  // Form fields: Stok & Konversi Dus / Karton
+  // Form fields: Stock & Carton Conversion
   const [trackStock, setTrackStock] = useState(true);
-  const [stock, setStock] = useState<number>(50);
-  const [minStock, setMinStock] = useState<number>(10);
-  const [itemsPerCarton, setItemsPerCarton] = useState<number>(24);
-  const [cartonWholesalePrice, setCartonWholesalePrice] = useState<number>(550000);
-  const [weightMl, setWeightMl] = useState<number>(600);
-  const [shelfLocation, setShelfLocation] = useState('Rak A-01');
+  const [stock, setStock] = useState<number>(initialStock);
+  const [minStock, setMinStock] = useState<number>(initialMinStock);
+  const [itemsPerCarton, setItemsPerCarton] = useState<number>(initialCartonPcs);
+  const [cartonWholesalePrice, setCartonWholesalePrice] = useState<number>(initialCartonWholesale);
+  const [weightMl, setWeightMl] = useState<number>(initialProduct?.weightMl ?? 600);
+  const [shelfLocation, setShelfLocation] = useState(initialProduct?.storageLocation ?? 'Shelf A-01');
 
-  // Form fields: Visibilitas & Status
+  // Currency string states to allow smooth input in both IDR and USD
+  const [costPriceStr, setCostPriceStr] = useState<string>(() => String(toDisplayValue(initialCost)));
+  const [sellPriceStr, setSellPriceStr] = useState<string>(() => String(toDisplayValue(initialSell)));
+  const [posPriceStr, setPosPriceStr] = useState<string>(() => String(toDisplayValue(initialProduct?.posPrice ?? initialSell)));
+  const [pwaPriceStr, setPwaPriceStr] = useState<string>(() => String(toDisplayValue(initialProduct?.pwaPrice ?? initialSell)));
+  const [cartonPriceStr, setCartonPriceStr] = useState<string>(() => String(toDisplayValue(initialCartonWholesale)));
+
+  // Sync state if initialProduct prop updates
+  React.useEffect(() => {
+    if (initialProduct) {
+      setProductName(initialProduct.name || '');
+      setSku(initialProduct.sku || '');
+      setCategory(initialProduct.category || 'MINERAL');
+      setBrand(initialProduct.brand || '');
+      setUnit(initialProduct.unit || 'Pcs');
+      setDescription(initialProduct.description || '');
+      const cst = initialProduct.costPrice ?? initialProduct.costPerUnit ?? 20000;
+      const sll = initialProduct.price ?? initialProduct.sellPrice ?? initialProduct.pricePerUnit ?? 25000;
+      const stk = initialProduct.stock ?? initialProduct.stockInUnits ?? 50;
+      const minStk = initialProduct.minStockAlert ?? initialProduct.minStock ?? 10;
+      const crtPcs = initialProduct.piecesPerCarton ?? initialProduct.itemsPerCarton ?? 24;
+      const crtPrice = initialProduct.pricePerCarton ?? 550000;
+      setCostPrice(cst);
+      setSellPrice(sll);
+      setPosPrice(initialProduct.posPrice ?? sll);
+      setPwaPrice(initialProduct.pwaPrice ?? sll);
+      setStock(stk);
+      setMinStock(minStk);
+      setItemsPerCarton(crtPcs);
+      setCartonWholesalePrice(crtPrice);
+      setCostPriceStr(String(toDisplayValue(cst)));
+      setSellPriceStr(String(toDisplayValue(sll)));
+      setPosPriceStr(String(toDisplayValue(initialProduct.posPrice ?? sll)));
+      setPwaPriceStr(String(toDisplayValue(initialProduct.pwaPrice ?? sll)));
+      setCartonPriceStr(String(toDisplayValue(crtPrice)));
+      if (initialProduct.imageUrl) {
+        setUploadedImage(initialProduct.imageUrl);
+      }
+    }
+  }, [initialProduct]);
+
+  // Automatically update input strings when currencyMode toggles (IDR <-> USD)
+  React.useEffect(() => {
+    setCostPriceStr(String(toDisplayValue(costPrice)));
+    setSellPriceStr(String(toDisplayValue(sellPrice)));
+    setPosPriceStr(String(toDisplayValue(posPrice)));
+    setPwaPriceStr(String(toDisplayValue(pwaPrice)));
+    setCartonPriceStr(String(toDisplayValue(cartonWholesalePrice)));
+  }, [currencyMode]);
+
+  // Input handlers that parse according to active currency
+  const handleCostPriceInput = (val: string) => {
+    setCostPriceStr(val);
+    const idr = parseInputToIdr(val);
+    setCostPrice(idr);
+  };
+
+  const handleSellPriceInput = (val: string) => {
+    setSellPriceStr(val);
+    const idr = parseInputToIdr(val);
+    setSellPrice(idr);
+    if (autoSyncPrices) {
+      setPosPrice(idr);
+      setPwaPrice(idr);
+      setPosPriceStr(val);
+      setPwaPriceStr(val);
+    }
+  };
+
+  const handlePosPriceInput = (val: string) => {
+    setPosPriceStr(val);
+    const idr = parseInputToIdr(val);
+    setPosPrice(idr);
+  };
+
+  const handlePwaPriceInput = (val: string) => {
+    setPwaPriceStr(val);
+    const idr = parseInputToIdr(val);
+    setPwaPrice(idr);
+  };
+
+  const handleCartonPriceInput = (val: string) => {
+    setCartonPriceStr(val);
+    const idr = parseInputToIdr(val);
+    setCartonWholesalePrice(idr);
+  };
+
+  // Form fields: Visibility & Status
   const [isActive, setIsActive] = useState(true);
   const [isPosVisible, setIsPosVisible] = useState(true);
   const [isPwaVisible, setIsPwaVisible] = useState(true);
@@ -79,7 +233,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
     {
       id: 'v_1',
       sku: 'SKU-' + Math.floor(1000 + Math.random() * 9000),
-      name: 'Varian 1 (Regular)',
+      name: language === 'id' ? 'Varian 1 (Regular)' : 'Variant 1 (Regular)',
       category: 'MINERAL',
       brand: '',
       costPrice: 20000,
@@ -120,7 +274,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
   const handleGenerateSku = () => {
     const generated = 'P' + Math.floor(100 + Math.random() * 900);
     setSku(generated);
-    showFlash(`SKU Baru di-generate: ${generated}`);
+    showFlash(
+      language === 'id'
+        ? `SKU Baru di-generate: ${generated}`
+        : `New SKU generated: ${generated}`
+    );
   };
 
   // Add Variant item
@@ -129,7 +287,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
     const newVariant: ProductVariantItem = {
       id: 'v_' + Date.now(),
       sku: 'SKU-' + Math.floor(1000 + Math.random() * 9000),
-      name: `${productName ? productName + ' ' : ''}Varian ${newIndex}`,
+      name: `${productName ? productName + ' ' : ''}${language === 'id' ? 'Varian' : 'Variant'} ${newIndex}`,
       category: category,
       brand: brand,
       costPrice: costPrice,
@@ -186,7 +344,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
       sellPrice: sellPrice,
       posPrice: posPrice,
       pwaPrice: pwaPrice,
-      sellPriceRange: hasVariants ? `Rp ${sellPrice.toLocaleString('id-ID')}` : undefined,
+      sellPriceRange: hasVariants ? formatCurrency(sellPrice) : undefined,
       totalStock: hasVariants
         ? variantsList.reduce((acc, curr) => acc + curr.stock, 0)
         : stock,
@@ -195,11 +353,13 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
       isActive: isActive,
       isPosVisible: isPosVisible,
       isPwaVisible: isPwaVisible,
+      imageUrl: uploadedImage || undefined,
       variants: hasVariants
         ? variantsList.map((v) => ({
             ...v,
             category: category,
             brand: brand || productName,
+            imageUrl: uploadedImage || undefined,
           }))
         : undefined,
     };
@@ -211,6 +371,9 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
     setSku('P' + Math.floor(100 + Math.random() * 900));
     setBrand('');
     setDescription('');
+    setUploadedImage(null);
+    setUploadedImageName('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setCostPrice(20000);
     setSellPrice(25000);
     setPosPrice(25000);
@@ -219,47 +382,128 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
     setCartonWholesalePrice(550000);
     setWeightMl(600);
     setHasVariants(false);
-    showFlash('Form berhasil di-reset!');
+    setCostPriceStr(String(toDisplayValue(20000)));
+    setSellPriceStr(String(toDisplayValue(25000)));
+    setPosPriceStr(String(toDisplayValue(25000)));
+    setPwaPriceStr(String(toDisplayValue(25000)));
+    setCartonPriceStr(String(toDisplayValue(550000)));
+    showFlash(
+      language === 'en'
+        ? 'Form has been reset!'
+        : 'Form berhasil di-reset!'
+    );
+  };
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Firestore save / update function
+  const saveProductToFirestore = async (newGroup: ProductGroupItem) => {
+    const isEdit = Boolean(initialProduct?.id);
+    const prodId = initialProduct?.id || newGroup.id;
+
+    const firestoreData: Record<string, any> = {
+      storeId: 'store_001',
+      name: productName.trim(),
+      sku: sku.trim() || ('P' + Math.floor(100 + Math.random() * 900)),
+      category: category,
+      price: sellPrice,
+      costPrice: costPrice,
+      stock: stock,
+      pricePerUnit: sellPrice,
+      costPerUnit: costPrice,
+      stockInUnits: stock,
+      piecesPerCarton: itemsPerCarton,
+      pricePerCarton: cartonWholesalePrice,
+      minStockAlert: minStock,
+      brand: brand || productName,
+      imageUrl: uploadedImage || '',
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (isEdit && prodId) {
+        // Edit existing product -> updateDoc
+        await updateDoc(doc(db, 'stores/store_001/products', prodId), firestoreData);
+        try {
+          await updateDoc(doc(db, 'products', prodId), firestoreData);
+        } catch (e) {}
+      } else {
+        // Create new product -> addDoc with createdAt: new Date()
+        const payloadWithCreatedAt = {
+          ...firestoreData,
+          createdAt: new Date(),
+        };
+        const docRef = await addDoc(collection(db, 'stores/store_001/products'), payloadWithCreatedAt);
+        newGroup.id = docRef.id;
+        try {
+          await setDoc(doc(db, 'products', docRef.id), {
+            ...payloadWithCreatedAt,
+            id: docRef.id,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.warn('Firestore write error in AddProductForm:', err);
+    }
   };
 
   // Submit Handler
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productName.trim()) {
-      showFlash('Peringatan: Silakan isi Nama Produk terlebih dahulu!');
+      showFlash(
+        language === 'en'
+          ? 'Warning: Please enter the Product Name first!'
+          : 'Peringatan: Silakan isi Nama Produk terlebih dahulu!'
+      );
       return;
     }
+    setIsSubmitting(true);
     const newGroup = buildProductObject();
+    await saveProductToFirestore(newGroup);
+    setIsSubmitting(false);
     onSubmit(newGroup);
   };
 
   // Save & Add Another Handler
-  const handleSaveAndAnother = (e: React.MouseEvent) => {
+  const handleSaveAndAnother = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!productName.trim()) {
-      showFlash('Peringatan: Silakan isi Nama Produk terlebih dahulu!');
+      showFlash(
+        language === 'en'
+          ? 'Warning: Please enter the Product Name first!'
+          : 'Peringatan: Silakan isi Nama Produk terlebih dahulu!'
+      );
       return;
     }
+    setIsSubmitting(true);
     const newGroup = buildProductObject();
+    await saveProductToFirestore(newGroup);
+    setIsSubmitting(false);
     if (onSaveAndAddAnother) {
       onSaveAndAddAnother(newGroup);
     } else {
       onSubmit(newGroup);
     }
     handleResetForm();
-    showFlash(`Produk "${newGroup.name}" tersimpan! Siap menambah produk baru.`);
+    showFlash(
+      language === 'en'
+        ? `Product "${newGroup.name}" saved! Ready to add another.`
+        : `Produk "${newGroup.name}" tersimpan! Siap menambah produk baru.`
+    );
   };
 
   // Preset visuals
   const imagePresets = [
-    { label: '💧 Aqua Botol', desc: 'Air Mineral 600ml / 1.5L' },
-    { label: '📦 Aqua Dus', desc: 'Karton 240ml Gelas' },
-    { label: '🔵 Aqua Galon', desc: 'Galon 19L Refill' },
-    { label: '🍃 Teh Pucuk', desc: 'Teh Melati 350ml' },
-    { label: '🥤 Coca-Cola', desc: 'Soft Drink 390ml' },
-    { label: '🍈 Gas Melon 3Kg', desc: 'LPG Subsidi Melon' },
-    { label: '☕ Good Day Kopi', desc: 'Kopi Botol & Sachet' },
-    { label: '🍜 Indomie Goreng', desc: 'Mie Instan Dus/Pcs' },
+    { label: '💧 Aqua Bottle', desc: language === 'id' ? 'Air Mineral 600ml / 1.5L' : 'Mineral Water 600ml / 1.5L' },
+    { label: '📦 Aqua Box', desc: language === 'id' ? 'Karton 240ml Gelas' : 'Carton 240ml Cups' },
+    { label: '🔵 Aqua Gallon', desc: language === 'id' ? 'Galon 19L Refill' : 'Gallon 19L Refill' },
+    { label: '🍃 Teh Pucuk', desc: language === 'id' ? 'Teh Melati 350ml' : 'Jasmine Tea 350ml' },
+    { label: '🥤 Coca-Cola', desc: language === 'id' ? 'Minuman Soda 390ml' : 'Soft Drink 390ml' },
+    { label: '🍈 Gas Melon 3Kg', desc: language === 'id' ? 'LPG Subsidi Melon' : 'LPG 3Kg Cylinder' },
+    { label: '☕ Good Day Coffee', desc: language === 'id' ? 'Kopi Botol & Sachet' : 'Coffee Bottle & Sachet' },
+    { label: '🍜 Indomie Goreng', desc: language === 'id' ? 'Mie Instan Dus/Pcs' : 'Instant Noodles Box/Pcs' },
   ];
 
   return (
@@ -284,7 +528,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                 isDark ? 'text-white' : 'text-slate-900'
               }`}
             >
-              Tambah Produk
+              {t('add_product', 'Add Product')}
             </h1>
           </div>
           <p
@@ -292,11 +536,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               isDark ? 'text-zinc-400' : 'text-slate-500'
             }`}
           >
-            Lengkapi formulir di bawah ini untuk menambahkan produk baru ke katalog POS Machine &amp; Toko Online PWA.
+            {t(
+              'add_product_subtitle',
+              'Fill out the form below to add a new item into the POS Machine catalog & Customer Online PWA.'
+            )}
           </p>
         </div>
 
-        {/* Action Controls: Theme Switcher & <- Kembali Button */}
+        {/* Action Controls: Theme Switcher & Back Button */}
         <div className="flex items-center gap-3">
           {/* Theme switcher */}
           <div
@@ -334,7 +581,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             </button>
           </div>
 
-          {/* <- Kembali Button */}
+          {/* Back Button */}
           <button
             type="button"
             onClick={onBack}
@@ -345,14 +592,182 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             }`}
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Kembali</span>
+            <span>{t('back', 'Back')}</span>
           </button>
         </div>
       </div>
 
       {/* MAIN FORM CONTAINER - Styled according to reference image with cards */}
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* CARD 1: INFORMASI DASAR PRODUK */}
+        {/* CARD: PRODUCT PHOTOS & IMAGES */}
+        <div
+          className={`rounded-2xl border p-6 sm:p-7 space-y-4 shadow-sm transition-colors ${
+            isDark
+              ? 'bg-zinc-900/90 border-zinc-800 text-zinc-100'
+              : 'bg-white border-slate-200 text-slate-800'
+          }`}
+        >
+          <div className="flex items-center justify-between border-b pb-3 border-zinc-800/60">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-indigo-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider">
+                {t('photo_and_image', 'Product Photos & Imagery')}
+              </h2>
+            </div>
+            <span className="text-[11px] text-zinc-400">
+              {t('photo_format_hint', 'Formats: JPG, PNG, WebP (Max 5MB)')}
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-6">
+            {/* IMAGE BOX ON LEFT */}
+            <div
+              className={`relative w-44 h-44 sm:w-48 sm:h-48 shrink-0 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center overflow-hidden transition-all group ${
+                isDark
+                  ? 'border-zinc-700 bg-zinc-950/70 hover:border-blue-500/60'
+                  : 'border-slate-300 bg-slate-50 hover:border-blue-400'
+              }`}
+            >
+              {uploadedImage ? (
+                <>
+                  <img
+                    src={uploadedImage}
+                    alt={language === 'id' ? 'Preview Produk' : 'Product Preview'}
+                    className="w-full h-full object-cover rounded-2xl"
+                  />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-lg cursor-pointer transition"
+                      title={t('change_image', 'Change Image')}
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadedImage(null);
+                        setUploadedImageName('');
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="p-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-lg cursor-pointer transition"
+                      title={t('delete_image', 'Delete')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex flex-col items-center justify-center p-4 text-center cursor-pointer hover:opacity-80 transition w-full h-full"
+                >
+                  <div
+                    className={`w-12 h-12 rounded-2xl border flex items-center justify-center mb-2.5 transition ${
+                      isDark
+                        ? 'bg-zinc-800/80 border-zinc-700/60 text-zinc-400 group-hover:text-blue-400 group-hover:border-blue-500/50'
+                        : 'bg-white border-slate-200 text-slate-400 group-hover:text-blue-500 group-hover:border-blue-400'
+                    }`}
+                  >
+                    <ImageIcon className="w-6 h-6" />
+                  </div>
+                  <span
+                    className={`text-xs font-semibold ${
+                      isDark ? 'text-zinc-300' : 'text-slate-700'
+                    }`}
+                  >
+                    {t('image_box', 'Image Box')}
+                  </span>
+                  <span className="text-[10px] text-zinc-500 mt-0.5">
+                    {t('click_to_pick', 'Click to select photo')}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* UPLOAD BUTTON ON RIGHT */}
+            <div className="flex-1 flex flex-col justify-center space-y-3">
+              <div>
+                <h3
+                  className={`text-sm font-bold flex items-center gap-2 ${
+                    isDark ? 'text-white' : 'text-slate-900'
+                  }`}
+                >
+                  <span>{t('upload_product_photo', 'Upload Product Photo')}</span>
+                  {uploadedImage && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-semibold">
+                      <Check className="w-3 h-3" /> {t('uploaded_badge', 'Uploaded')}
+                    </span>
+                  )}
+                </h3>
+                <p
+                  className={`text-xs mt-1 leading-relaxed ${
+                    isDark ? 'text-zinc-400' : 'text-slate-500'
+                  }`}
+                >
+                  {t(
+                    'upload_photo_desc',
+                    'Upload high-resolution product imagery to display on the POS Cashier Terminal and Customer PWA storefront.'
+                  )}
+                </p>
+                {uploadedImageName && (
+                  <p className="text-[11px] text-zinc-400 mt-1.5 font-mono flex items-center gap-1.5">
+                    <span className="text-zinc-500">File:</span>
+                    <span className="text-blue-400 font-semibold truncate max-w-xs">
+                      {uploadedImageName}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              {/* Hidden File Input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+                className="hidden"
+              />
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition flex items-center gap-2 cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>
+                    {uploadedImage
+                      ? t('change_image', 'Change Image')
+                      : t('upload_image_btn', 'Upload Image')}
+                  </span>
+                </button>
+
+                {uploadedImage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadedImage(null);
+                      setUploadedImageName('');
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className={`px-3.5 py-2.5 rounded-xl font-semibold text-xs border transition flex items-center gap-1.5 cursor-pointer ${
+                      isDark
+                        ? 'bg-zinc-800 hover:bg-zinc-700 text-rose-400 hover:text-rose-300 border-zinc-700'
+                        : 'bg-slate-100 hover:bg-slate-200 text-rose-600 border-slate-200'
+                    }`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{t('delete_image', 'Delete')}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* CARD 1: BASIC PRODUCT INFORMATION */}
         <div
           className={`rounded-2xl border p-6 sm:p-7 space-y-5 shadow-sm transition-colors ${
             isDark
@@ -364,11 +779,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             <div className="flex items-center gap-2">
               <Tag className="w-4 h-4 text-blue-500" />
               <h2 className="text-sm font-bold uppercase tracking-wider">
-                Informasi Dasar Produk
+                {t('basic_info', 'Basic Product Information')}
               </h2>
             </div>
             <span className="text-[11px] text-zinc-400">
-              Bagian 1 dari 4 &bull; Wajib diisi (*)
+              {t('part_1_of_4', 'Part 1 of 4 • Required (*)')}
             </span>
           </div>
 
@@ -380,12 +795,15 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-300' : 'text-slate-700'
                 }`}
               >
-                Nama Produk <span className="text-rose-500">*</span>
+                {t('product_name', 'Product Name')} <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
                 required
-                placeholder="Contoh: Aqua 600ml Botol / Le Minerale Dus 24x600ml / Gas Melon 3Kg"
+                placeholder={t(
+                  'product_name_placeholder',
+                  'Example: Aqua 600ml Bottle / Le Minerale Carton 24x600ml / Gas Cylinder 3Kg'
+                )}
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
@@ -403,14 +821,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-300' : 'text-slate-700'
                   }`}
                 >
-                  Kode Barcode / SKU
+                  {t('barcode_sku', 'Barcode / SKU')}
                 </label>
                 <button
                   type="button"
                   onClick={handleGenerateSku}
                   className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer"
                 >
-                  <RotateCcw className="w-3 h-3" /> Acak SKU
+                  <RotateCcw className="w-3 h-3" /> {t('random_sku', 'Generate SKU')}
                 </button>
               </div>
               <div className="relative">
@@ -444,7 +862,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-300' : 'text-slate-700'
                 }`}
               >
-                Kategori Produk
+                {t('product_category', 'Product Category')}
               </label>
               <select
                 value={category}
@@ -455,15 +873,15 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     : 'bg-slate-50 border-slate-200 text-slate-900 focus:bg-white focus:border-blue-500'
                 }`}
               >
-                <option value="MINERAL">MINERAL (Air Mineral)</option>
-                <option value="FLAVORED">FLAVORED (Minuman Berperisa)</option>
-                <option value="COLA">COLA (Minuman Soda)</option>
-                <option value="GAS">GAS (LPG &amp; Tabung)</option>
-                <option value="COFFEE">COFFEE (Kopi &amp; Minuman Susu)</option>
-                <option value="SNACK">SNACK (Makanan Ringan)</option>
-                <option value="DAIRY">DAIRY (Susu &amp; Olahan)</option>
-                <option value="INSTANT_FOOD">INSTANT FOOD (Mie &amp; Cepat Saji)</option>
-                <option value="OTHER">LAINNYA</option>
+                <option value="MINERAL">MINERAL ({language === 'id' ? 'Air Mineral' : 'Mineral Water'})</option>
+                <option value="FLAVORED">FLAVORED ({language === 'id' ? 'Minuman Berperisa' : 'Flavored Drinks'})</option>
+                <option value="COLA">COLA ({language === 'id' ? 'Minuman Soda' : 'Carbonated Soft Drinks'})</option>
+                <option value="GAS">GAS ({language === 'id' ? 'LPG & Tabung' : 'LPG & Cylinders'})</option>
+                <option value="COFFEE">COFFEE ({language === 'id' ? 'Kopi & Minuman Susu' : 'Coffee & Milk'})</option>
+                <option value="SNACK">SNACK ({language === 'id' ? 'Makanan Ringan' : 'Light Snacks'})</option>
+                <option value="DAIRY">DAIRY ({language === 'id' ? 'Susu & Olahan' : 'Dairy & Milk'})</option>
+                <option value="INSTANT_FOOD">INSTANT FOOD ({language === 'id' ? 'Mie & Cepat Saji' : 'Instant Noodles'})</option>
+                <option value="OTHER">{language === 'id' ? 'LAINNYA' : 'OTHER'}</option>
               </select>
             </div>
 
@@ -474,11 +892,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-300' : 'text-slate-700'
                 }`}
               >
-                Merek / Pabrik
+                {t('brand_label', 'Brand / Manufacturer')}
               </label>
               <input
                 type="text"
-                placeholder="Contoh: Danone, Mayora, Wings, Pertamina"
+                placeholder={t('brand_placeholder', 'Example: Danone, Mayora, Wings, Pertamina')}
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
@@ -496,7 +914,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-300' : 'text-slate-700'
                 }`}
               >
-                Satuan Jual
+                {t('selling_unit', 'Selling Unit')}
               </label>
               <select
                 value={unit}
@@ -507,13 +925,13 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     : 'bg-slate-50 border-slate-200 text-slate-900 focus:bg-white focus:border-blue-500'
                 }`}
               >
-                <option value="Pcs">Pcs (Satuan Unit)</option>
-                <option value="Botol">Botol</option>
-                <option value="Dus / Karton">Dus / Karton</option>
-                <option value="Cup">Cup / Gelas</option>
+                <option value="Pcs">Pcs ({language === 'id' ? 'Satuan Unit' : 'Individual Units'})</option>
+                <option value="Botol">{language === 'id' ? 'Botol' : 'Bottle'}</option>
+                <option value="Dus / Karton">{language === 'id' ? 'Dus / Karton' : 'Box / Carton'}</option>
+                <option value="Cup">{language === 'id' ? 'Cup / Gelas' : 'Cup / Glass'}</option>
                 <option value="Pack">Pack</option>
-                <option value="Galon">Galon 19L</option>
-                <option value="Tabung">Tabung Gas</option>
+                <option value="Galon">{language === 'id' ? 'Galon 19L' : 'Gallon 19L'}</option>
+                <option value="Tabung">{language === 'id' ? 'Tabung Gas' : 'Gas Cylinder'}</option>
                 <option value="Kg">Kilogram (Kg)</option>
               </select>
             </div>
@@ -526,11 +944,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                 isDark ? 'text-zinc-300' : 'text-slate-700'
               }`}
             >
-              Deskripsi / Keterangan Tambahan (Opsional)
+              {t('product_desc_optional', 'Description / Additional Notes (Optional)')}
             </label>
             <textarea
               rows={2}
-              placeholder="Catatan detail produk, cara penyajian, syarat retur botol, dsb..."
+              placeholder={t(
+                'desc_placeholder',
+                'Product details, serving notes, bottle return terms, etc...'
+              )}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className={`w-full px-4 py-2 rounded-xl border text-xs transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
@@ -542,54 +963,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
           </div>
         </div>
 
-        {/* CARD 2: FOTO & VISUAL PRESET PRODUK */}
-        <div
-          className={`rounded-2xl border p-6 sm:p-7 space-y-4 shadow-sm transition-colors ${
-            isDark
-              ? 'bg-zinc-900/90 border-zinc-800 text-zinc-100'
-              : 'bg-white border-slate-200 text-slate-800'
-          }`}
-        >
-          <div className="flex items-center justify-between border-b pb-3 border-zinc-800/60">
-            <div className="flex items-center gap-2">
-              <ImageIcon className="w-4 h-4 text-indigo-400" />
-              <h2 className="text-sm font-bold uppercase tracking-wider">
-                Visual &amp; Foto Produk
-              </h2>
-            </div>
-            <span className="text-[11px] text-zinc-400">Pilih Preset Cepat atau Ikon</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            {imagePresets.map((preset) => {
-              const isSelected = selectedPresetImage === preset.label;
-              return (
-                <button
-                  type="button"
-                  key={preset.label}
-                  onClick={() => setSelectedPresetImage(preset.label)}
-                  className={`p-3 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
-                    isSelected
-                      ? 'border-blue-500 bg-blue-600/15 text-white ring-2 ring-blue-500/30'
-                      : isDark
-                      ? 'border-zinc-800 bg-zinc-950/60 hover:bg-zinc-800/60 text-zinc-300'
-                      : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold">{preset.label}</span>
-                    {isSelected && <Check className="w-3.5 h-3.5 text-blue-400" />}
-                  </div>
-                  <span className={`text-[10px] mt-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
-                    {preset.desc}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* CARD 3: HARGA, PAJAK & KALKULASI MARGIN */}
+        {/* CARD 3: PRICING, TAX & PROFIT MARGIN */}
         <div
           className={`rounded-2xl border p-6 sm:p-7 space-y-5 shadow-sm transition-colors ${
             isDark
@@ -601,25 +975,25 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             <div className="flex items-center gap-2">
               <DollarSign className="w-4 h-4 text-emerald-400" />
               <h2 className="text-sm font-bold uppercase tracking-wider">
-                Harga Jual, Modal &amp; Margin Laba
+                {t('pricing_profit_margin', 'Sales Price, Capital & Profit Margin')}
               </h2>
             </div>
             <div className="flex items-center gap-1.5 text-[11px] text-blue-400">
               <Info className="w-3.5 h-3.5" />
-              <span>POS &amp; PWA otomatis sinkron</span>
+              <span>{t('pos_pwa_auto_sync', 'POS & PWA auto-synchronized')}</span>
             </div>
           </div>
 
           {/* Pricing Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Modal */}
+            {/* Modal / Purchase Price */}
             <div>
               <label
                 className={`block text-xs font-semibold mb-1.5 ${
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Harga Modal / Beli (Rp)
+                {t('cost_price', 'Purchase Price / Cost')} ({currencySymbol})
               </label>
               <div className="relative">
                 <span
@@ -627,14 +1001,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-500' : 'text-slate-400'
                   }`}
                 >
-                  Rp
+                  {currencySymbol}
                 </span>
                 <input
                   type="number"
                   min="0"
-                  step="500"
-                  value={costPrice}
-                  onChange={(e) => setCostPrice(Number(e.target.value))}
+                  step={priceStep}
+                  value={costPriceStr}
+                  onChange={(e) => handleCostPriceInput(e.target.value)}
                   className={`w-full pl-10 pr-3 py-2.5 rounded-xl border font-mono text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isDark
                       ? 'bg-zinc-950 border-zinc-700 text-zinc-100'
@@ -644,14 +1018,15 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               </div>
             </div>
 
-            {/* Jual */}
+            {/* Jual / Standard Retail Price */}
             <div>
               <label
                 className={`block text-xs font-semibold mb-1.5 ${
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Harga Jual Standar (Rp) <span className="text-rose-500">*</span>
+                {t('selling_price_standard', 'Standard Retail Price')} ({currencySymbol}){' '}
+                <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
                 <span
@@ -659,15 +1034,15 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-500' : 'text-slate-400'
                   }`}
                 >
-                  Rp
+                  {currencySymbol}
                 </span>
                 <input
                   type="number"
                   min="0"
-                  step="500"
+                  step={priceStep}
                   required
-                  value={sellPrice}
-                  onChange={(e) => handleSellPriceChange(Number(e.target.value))}
+                  value={sellPriceStr}
+                  onChange={(e) => handleSellPriceInput(e.target.value)}
                   className={`w-full pl-10 pr-3 py-2.5 rounded-xl border font-mono text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isDark
                       ? 'bg-zinc-950 border-zinc-700 text-emerald-400'
@@ -685,10 +1060,10 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-400' : 'text-slate-600'
                   }`}
                 >
-                  Harga Kasir POS (Rp)
+                  {t('pos_price', 'POS Cashier Price')} ({currencySymbol})
                 </label>
                 <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 px-1.5 py-0.2 rounded">
-                  Otomatis
+                  {t('auto_badge', 'Auto')}
                 </span>
               </div>
               <div className="relative">
@@ -697,14 +1072,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-500' : 'text-slate-400'
                   }`}
                 >
-                  Rp
+                  {currencySymbol}
                 </span>
                 <input
                   type="number"
                   min="0"
-                  step="500"
-                  value={posPrice}
-                  onChange={(e) => setPosPrice(Number(e.target.value))}
+                  step={priceStep}
+                  value={posPriceStr}
+                  onChange={(e) => handlePosPriceInput(e.target.value)}
                   className={`w-full pl-10 pr-3 py-2.5 rounded-xl border font-mono text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isDark
                       ? 'bg-zinc-950 border-zinc-700 text-zinc-200'
@@ -722,10 +1097,10 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-400' : 'text-slate-600'
                   }`}
                 >
-                  Harga Online PWA (Rp)
+                  {t('pwa_price', 'Online PWA Price')} ({currencySymbol})
                 </label>
                 <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 px-1.5 py-0.2 rounded">
-                  Otomatis
+                  {t('auto_badge', 'Auto')}
                 </span>
               </div>
               <div className="relative">
@@ -734,14 +1109,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-500' : 'text-slate-400'
                   }`}
                 >
-                  Rp
+                  {currencySymbol}
                 </span>
                 <input
                   type="number"
                   min="0"
-                  step="500"
-                  value={pwaPrice}
-                  onChange={(e) => setPwaPrice(Number(e.target.value))}
+                  step={priceStep}
+                  value={pwaPriceStr}
+                  onChange={(e) => handlePwaPriceInput(e.target.value)}
                   className={`w-full pl-10 pr-3 py-2.5 rounded-xl border font-mono text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isDark
                       ? 'bg-zinc-950 border-zinc-700 text-zinc-200'
@@ -759,10 +1134,10 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-400' : 'text-slate-600'
                   }`}
                 >
-                  Harga Grosir per Dus (Rp)
+                  {t('wholesale_carton_price', 'Wholesale Box Price')} ({currencySymbol})
                 </label>
                 <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded">
-                  Dus / Karton
+                  {t('carton_badge', 'Box / Carton')}
                 </span>
               </div>
               <div className="relative">
@@ -771,14 +1146,14 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                     isDark ? 'text-zinc-500' : 'text-slate-400'
                   }`}
                 >
-                  Rp
+                  {currencySymbol}
                 </span>
                 <input
                   type="number"
                   min="0"
-                  step="1000"
-                  value={cartonWholesalePrice}
-                  onChange={(e) => setCartonWholesalePrice(Number(e.target.value))}
+                  step={cartonPriceStep}
+                  value={cartonPriceStr}
+                  onChange={(e) => handleCartonPriceInput(e.target.value)}
                   className={`w-full pl-10 pr-3 py-2.5 rounded-xl border font-mono text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isDark
                       ? 'bg-zinc-950 border-zinc-700 text-amber-400'
@@ -807,33 +1182,44 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               </div>
               <div>
                 <span className="font-bold text-sm">
-                  Keuntungan per Unit: Rp {profitPerUnit.toLocaleString('id-ID')}
+                  {t('profit_per_unit', 'Unit Profit')}:{' '}
+                  {formatCurrency(profitPerUnit)}
                 </span>
                 <div className="text-[11px] opacity-80 mt-0.5">
-                  Margin Laba Bersih: <span className="font-black font-mono">{marginPercent}%</span> &bull; Status:{' '}
-                  {Number(marginPercent) >= 20 ? 'Margin Sangat Sehat' : Number(marginPercent) >= 10 ? 'Margin Sedang' : 'Margin Tipis'}
+                  {t('net_profit_margin', 'Net Profit Margin')}:{' '}
+                  <span className="font-black font-mono">{marginPercent}%</span> &bull;{' '}
+                  {t('status', 'Status')}:{' '}
+                  {Number(marginPercent) >= 20
+                    ? t('margin_healthy', 'Healthy Margin')
+                    : Number(marginPercent) >= 10
+                    ? t('margin_medium', 'Moderate Margin')
+                    : t('margin_thin', 'Thin Margin')}
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-semibold">Pengaturan Pajak:</span>
+              <span className="text-[11px] font-semibold">
+                {t('tax_setting', 'Tax Setting')}:
+              </span>
               <select
                 value={taxMode}
                 onChange={(e) => setTaxMode(e.target.value as any)}
                 className={`px-3 py-1.5 rounded-lg border text-xs font-semibold ${
-                  isDark ? 'bg-zinc-900 border-zinc-700 text-white' : 'bg-white border-slate-300 text-slate-800'
+                  isDark
+                    ? 'bg-zinc-900 border-zinc-700 text-white'
+                    : 'bg-white border-slate-300 text-slate-800'
                 }`}
               >
-                <option value="none">Bebas Pajak (Non PPN)</option>
-                <option value="ppn11">PPN 11% (Tambah Otomatis)</option>
-                <option value="inclusive">Termasuk Pajak (Include)</option>
+                <option value="none">{t('tax_none', 'Tax Exempt (No VAT)')}</option>
+                <option value="ppn11">{t('tax_ppn11', 'VAT 11% (Auto Append)')}</option>
+                <option value="inclusive">{t('tax_inclusive', 'Tax Inclusive')}</option>
               </select>
             </div>
           </div>
         </div>
 
-        {/* CARD 4: STOK, KONVERSI KARTON / DUS & LOKASI GUDANG */}
+        {/* CARD 4: STOCK, CARTON CONVERSION & WAREHOUSE LOCATION */}
         <div
           className={`rounded-2xl border p-6 sm:p-7 space-y-5 shadow-sm transition-colors ${
             isDark
@@ -845,11 +1231,13 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             <div className="flex items-center gap-2">
               <Boxes className="w-4 h-4 text-amber-500" />
               <h2 className="text-sm font-bold uppercase tracking-wider">
-                Manajemen Stok &amp; Konversi Dus / Karton
+                {t('stock_management', 'Stock Management & Carton Conversion')}
               </h2>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-zinc-400">Kelola Stok:</span>
+              <span className="text-xs font-semibold text-zinc-400">
+                {t('manage_stock', 'Track Inventory')}:
+              </span>
               <button
                 type="button"
                 onClick={() => setTrackStock(!trackStock)}
@@ -874,7 +1262,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Stok Awal (Pcs / Unit)
+                {t('initial_stock', 'Initial Stock (Units / Pcs)')}
               </label>
               <input
                 type="number"
@@ -896,7 +1284,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Batas Stok Minimum (Kritis)
+                {t('min_stock_critical', 'Minimum Threshold (Critical)')}
               </label>
               <input
                 type="number"
@@ -918,7 +1306,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Isi per Karton / Dus
+                {t('items_per_carton', 'Items per Carton / Box')}
               </label>
               <input
                 type="number"
@@ -940,11 +1328,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Lokasi Rak / Penyimpanan
+                {t('shelf_location', 'Shelf / Storage Location')}
               </label>
               <input
                 type="text"
-                placeholder="Rak A-01 / Gudang 2"
+                placeholder={t('shelf_placeholder', 'Shelf A-01 / Warehouse 2')}
                 value={shelfLocation}
                 onChange={(e) => setShelfLocation(e.target.value)}
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
@@ -962,7 +1350,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   isDark ? 'text-zinc-400' : 'text-slate-600'
                 }`}
               >
-                Berat / Volume Satuan (ml / gr)
+                {t('weight_volume', 'Unit Weight / Volume (ml / gr)')}
               </label>
               <input
                 type="number"
@@ -979,7 +1367,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
           </div>
         </div>
 
-        {/* CARD 5: VARIAN PRODUK (OPSIONAL) */}
+        {/* CARD 5: PRODUCT VARIANTS (OPTIONAL) */}
         <div
           className={`rounded-2xl border p-6 sm:p-7 space-y-4 shadow-sm transition-colors ${
             isDark
@@ -992,10 +1380,13 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               <Layers className="w-4 h-4 text-blue-500" />
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wider">
-                  Varian Produk (Ukuran, Rasa, Kemasan)
+                  {t('product_variants', 'Product Variants (Size, Flavor, Package)')}
                 </h2>
                 <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
-                  Aktifkan jika produk memiliki berbagai pilihan (misal: 600ml, 1500ml, Original, Dingin).
+                  {t(
+                    'product_variants_desc',
+                    'Enable if product comes in multiple variations (e.g., 600ml, 1500ml, Regular, Cold).'
+                  )}
                 </p>
               </div>
             </div>
@@ -1007,7 +1398,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   hasVariants ? 'text-blue-500 font-bold' : isDark ? 'text-zinc-500' : 'text-slate-400'
                 }`}
               >
-                {hasVariants ? 'Aktif' : 'Nonaktif'}
+                {hasVariants ? t('variants_active', 'Active') : t('variants_inactive', 'Inactive')}
               </span>
               <button
                 type="button"
@@ -1030,7 +1421,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
             <div className="pt-2 space-y-3 animate-in fade-in">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-zinc-300">
-                  Daftar Pilihan Varian ({variantsList.length})
+                  {t('variant_list_title', 'Variant Options List')} ({variantsList.length})
                 </span>
                 <button
                   type="button"
@@ -1038,7 +1429,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-xs cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>+ Tambah Varian Baru</span>
+                  <span>{t('add_new_variant', '+ Add New Variant')}</span>
                 </button>
               </div>
 
@@ -1052,12 +1443,16 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                           : 'text-slate-500 border-slate-200 bg-slate-100/60'
                       }`}
                     >
-                      <th className="py-2.5 px-3">Nama Varian</th>
-                      <th className="py-2.5 px-3">SKU</th>
-                      <th className="py-2.5 px-3">Harga Modal (Rp)</th>
-                      <th className="py-2.5 px-3">Harga Jual (Rp)</th>
-                      <th className="py-2.5 px-3 text-center">Stok</th>
-                      <th className="py-2.5 px-3 text-right">Aksi</th>
+                      <th className="py-2.5 px-3">{t('variant_name_th', 'Variant Name')}</th>
+                      <th className="py-2.5 px-3">{t('variant_sku_th', 'SKU')}</th>
+                      <th className="py-2.5 px-3">
+                        {t('variant_cost_th', 'Cost Price')} ({currencySymbol})
+                      </th>
+                      <th className="py-2.5 px-3">
+                        {t('variant_sell_th', 'Retail Price')} ({currencySymbol})
+                      </th>
+                      <th className="py-2.5 px-3 text-center">{t('variant_stock_th', 'Stock')}</th>
+                      <th className="py-2.5 px-3 text-right">{t('variant_action_th', 'Actions')}</th>
                     </tr>
                   </thead>
                   <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-slate-200/60'}`}>
@@ -1086,8 +1481,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                         <td className="py-2 px-3">
                           <input
                             type="number"
-                            value={v.costPrice}
-                            onChange={(e) => handleUpdateVariantField(v.id, 'costPrice', Number(e.target.value))}
+                            step={priceStep}
+                            value={toDisplayValue(v.costPrice)}
+                            onChange={(e) =>
+                              handleUpdateVariantField(v.id, 'costPrice', parseInputToIdr(e.target.value))
+                            }
                             className={`w-28 px-2 py-1.5 rounded-lg border font-mono text-xs ${
                               isDark ? 'bg-zinc-900 border-zinc-700 text-zinc-100' : 'bg-white border-slate-200 text-slate-800'
                             }`}
@@ -1096,8 +1494,11 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                         <td className="py-2 px-3">
                           <input
                             type="number"
-                            value={v.sellPrice}
-                            onChange={(e) => handleUpdateVariantField(v.id, 'sellPrice', Number(e.target.value))}
+                            step={priceStep}
+                            value={toDisplayValue(v.sellPrice)}
+                            onChange={(e) =>
+                              handleUpdateVariantField(v.id, 'sellPrice', parseInputToIdr(e.target.value))
+                            }
                             className={`w-28 px-2 py-1.5 rounded-lg border font-mono text-xs font-bold text-emerald-500 ${
                               isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-slate-200'
                             }`}
@@ -1123,7 +1524,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                                 ? 'opacity-30 cursor-not-allowed text-zinc-500'
                                 : 'text-rose-500 hover:bg-rose-500/10 cursor-pointer'
                             }`}
-                            title="Hapus Varian"
+                            title={t('delete_image', 'Delete')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1137,7 +1538,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
           )}
         </div>
 
-        {/* BOTTOM ACTION BAR - Matches image with Reset, Batal, Simpan & Tambah Lainnya, Simpan Produk */}
+        {/* BOTTOM ACTION BAR: Reset, Cancel, Save & Add Another, Save Product */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
@@ -1150,7 +1551,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               }`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Form</span>
+              <span>{t('reset_form', 'Reset Form')}</span>
             </button>
 
             <button
@@ -1162,7 +1563,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
-              Batal
+              {t('cancel', 'Cancel')}
             </button>
           </div>
 
@@ -1176,7 +1577,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
                   : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-800'
               }`}
             >
-              Simpan &amp; Tambah Lainnya
+              {t('save_and_add_another', 'Save & Add Another')}
             </button>
 
             <button
@@ -1184,7 +1585,7 @@ export const AddProductForm: React.FC<AddProductFormProps> = ({
               className="flex items-center justify-center gap-2 px-7 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-lg shadow-blue-600/30 transition cursor-pointer"
             >
               <Check className="w-4 h-4 stroke-[3]" />
-              <span>Simpan Produk</span>
+              <span>{t('save_product', 'Save Product')}</span>
             </button>
           </div>
         </div>

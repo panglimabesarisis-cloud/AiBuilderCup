@@ -2,11 +2,23 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Product, StoreConfig, Transaction, FraudLog } from '../types';
+import {
+  Product,
+  StoreConfig,
+  Transaction,
+  TransactionItem,
+  PackageType,
+  RiskSeverity,
+  TransactionChannel,
+  PaymentMethod,
+  TransactionStatus,
+  FraudLog,
+} from '../types';
 
 export const DEMO_STORE_ID = 'store_demo_01';
 
@@ -437,4 +449,222 @@ export async function resetDatabaseWithFreshSeed(): Promise<void> {
   }
 
   await batch.commit();
+}
+
+function mulberry32(seed: number) {
+  let s = seed;
+  return function () {
+    let t = (s += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class BatchRunner {
+  private batch = writeBatch(db);
+  private count = 0;
+
+  async set(ref: any, data: any) {
+    this.batch.set(ref, data);
+    this.count++;
+    if (this.count >= 400) {
+      await this.commit();
+    }
+  }
+
+  async update(ref: any, data: any) {
+    this.batch.update(ref, data);
+    this.count++;
+    if (this.count >= 400) {
+      await this.commit();
+    }
+  }
+
+  async commit() {
+    if (this.count > 0) {
+      await this.batch.commit();
+      this.batch = writeBatch(db);
+      this.count = 0;
+    }
+  }
+}
+
+export async function seedReportDemoIfNeeded(): Promise<void> {
+  try {
+    const reportSeedRef = doc(db, 'seed', 'report_demo');
+    const reportSeedSnap = await getDoc(reportSeedRef);
+    if (reportSeedSnap.exists()) {
+      return;
+    }
+
+    const batchRunner = new BatchRunner();
+    const rand = mulberry32(7);
+
+    // 1. Update storageLocation for existing products with empty storageLocation
+    const prodSnap = await getDocs(collection(db, 'products'));
+    const outletCycle = ['out_1', 'out_2', 'out_3'];
+    let cycleIdx = 0;
+
+    for (const pDoc of prodSnap.docs) {
+      const pData = pDoc.data() as Partial<Product>;
+      if (!pData.storageLocation || pData.storageLocation.trim() === '') {
+        let loc = '';
+        if (pData.category === 'Mineral Dus' || pData.category === 'Mineral Galon') {
+          loc = 'wh_1';
+        } else if (pData.category === 'Gas') {
+          loc = 'wh_2';
+        } else {
+          loc = outletCycle[cycleIdx % 3];
+          cycleIdx++;
+        }
+        await batchRunner.update(pDoc.ref, { storageLocation: loc });
+      }
+    }
+
+    // 2. 90 transactions
+    const CUSTOMER_NAMES = [
+      'Budi Santoso', 'Siti Rahmawati', 'Ahmad Fauzi', 'Dewi Lestari',
+      'Eko Prasetyo', 'Rina Marlina', 'Hendra Gunawan', 'Nurul Hidayati',
+      'Agus Setiawan', 'Maya Indah', 'Rizky Pratama', 'Indah Permata Sari',
+      'Doni Wahyudi', 'Fitri Handayani', 'Joko Susilo', 'Tari Anggraini',
+    ];
+
+    const now = new Date();
+
+    for (let i = 0; i < 90; i++) {
+      const txId = 'demo_tx_' + String(i + 1).padStart(3, '0');
+
+      // CreatedAt spread over last 30 days, hours 08:00 - 20:00
+      const daysAgo = 29 - Math.floor((i / 90) * 30);
+      const hour = 8 + Math.floor(rand() * 12);
+      const minute = Math.floor(rand() * 60);
+      const second = Math.floor(rand() * 60);
+      const txDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+      txDate.setHours(hour, minute, second, 0);
+      const createdAt = txDate.toISOString();
+
+      // outletId: out_1 55% / out_2 25% / out_3 20%
+      const rOut = rand();
+      const outletId = rOut < 0.55 ? 'out_1' : rOut < 0.80 ? 'out_2' : 'out_3';
+
+      // channel: pos 70% / pwa_client 30%
+      const rChan = rand();
+      const channel: TransactionChannel = rChan < 0.70 ? 'pos' : 'pwa_client';
+
+      // paymentMethod: cash 45% / qris 40% / card 15%
+      const rPay = rand();
+      const paymentMethod: PaymentMethod = rPay < 0.45 ? 'cash' : rPay < 0.85 ? 'qris' : 'card';
+
+      // status: completed 90% / flagged_fraud 5% / pending_approval 5%
+      const rStat = rand();
+      const status: TransactionStatus = rStat < 0.90 ? 'completed' : rStat < 0.95 ? 'flagged_fraud' : 'pending_approval';
+
+      // 1-3 items from INITIAL_PRODUCTS (qty 1-6; packageType carton bila category 'Mineral Dus')
+      const itemCount = 1 + Math.floor(rand() * 3);
+      const pickedIndices: number[] = [];
+      while (pickedIndices.length < itemCount) {
+        const pIdx = Math.floor(rand() * INITIAL_PRODUCTS.length);
+        if (!pickedIndices.includes(pIdx)) {
+          pickedIndices.push(pIdx);
+        }
+      }
+
+      const txItems: TransactionItem[] = [];
+      let totalSubtotal = 0;
+
+      for (let j = 0; j < pickedIndices.length; j++) {
+        const prod = INITIAL_PRODUCTS[pickedIndices[j]];
+        const qty = 1 + Math.floor(rand() * 6);
+        const isCarton = prod.category === 'Mineral Dus';
+        const packageType: PackageType = isCarton ? 'carton' : 'unit';
+        const unitPrice = isCarton ? prod.pricePerCarton : prod.pricePerUnit;
+        const unitsDeducted = isCarton ? qty * prod.piecesPerCarton : qty;
+        const subtotal = Number((qty * unitPrice).toFixed(2));
+        totalSubtotal += subtotal;
+
+        const item: TransactionItem = {
+          id: `item_${txId}_${j + 1}`,
+          storeId: DEMO_STORE_ID,
+          transactionId: txId,
+          productId: prod.id,
+          productName: prod.name,
+          packageType,
+          quantityOrdered: qty,
+          unitsDeducted,
+          unitPrice,
+          subtotal,
+        };
+        txItems.push(item);
+      }
+
+      const totalAmount = Number(totalSubtotal.toFixed(2));
+      const costMultiplier = 0.60 + rand() * 0.12;
+      const totalCost = Number((totalAmount * costMultiplier).toFixed(2));
+
+      let fraudScore: number;
+      let riskLevel: RiskSeverity;
+      let fraudFlags: string[];
+
+      if (status === 'flagged_fraud') {
+        fraudScore = Math.floor(70 + rand() * 21); // 70-90
+        riskLevel = 'critical';
+        fraudFlags = ['SUSPECTED_BOT_BURST', 'GEOFENCE_ANOMALY'];
+      } else if (status === 'pending_approval') {
+        fraudScore = Math.floor(25 + rand() * 20); // 25-44
+        riskLevel = 'medium';
+        fraudFlags = ['MANUAL_REVIEW_REQUIRED'];
+      } else {
+        fraudScore = Math.floor(5 + rand() * 21); // 5-25
+        riskLevel = 'clean';
+        fraudFlags = channel === 'pos' ? ['VERIFIED_POS_CHECKOUT'] : ['PWA_VERIFIED_MEMBER'];
+      }
+
+      const customerName = CUSTOMER_NAMES[Math.floor(rand() * CUSTOMER_NAMES.length)];
+      const cashierId = channel === 'pos'
+        ? (outletId === 'out_1' ? 'cashier_01' : outletId === 'out_2' ? 'cashier_02' : 'cashier_03')
+        : null;
+
+      const aiExplanation = status === 'flagged_fraud'
+        ? 'Transaksi ditandai mencurigakan oleh sistem deteksi anomali.'
+        : 'Transaksi berhasil divalidasi dan terverifikasi aman.';
+
+      const txDoc: any = {
+        id: txId,
+        storeId: DEMO_STORE_ID,
+        outletId,
+        channel,
+        customerName,
+        totalAmount,
+        totalCost,
+        paymentMethod,
+        status,
+        fraudScore,
+        fraudFlags,
+        riskLevel,
+        aiExplanation,
+        createdAt,
+        items: txItems,
+      };
+
+      if (cashierId) {
+        txDoc.cashierId = cashierId;
+      }
+
+      await batchRunner.set(doc(db, 'transactions', txId), txDoc);
+      for (const it of txItems) {
+        await batchRunner.set(doc(db, 'transactions', txId, 'items', it.id), it);
+      }
+    }
+
+    // 3. Mark seed/report_demo
+    await batchRunner.set(doc(db, 'seed', 'report_demo'), {
+      createdAt: new Date().toISOString(),
+    });
+
+    await batchRunner.commit();
+    console.log('Multi-outlet report demo seed completed successfully.');
+  } catch (error) {
+    console.warn('Notice during seedReportDemoIfNeeded:', error);
+  }
 }

@@ -12,7 +12,10 @@ import {
   Building,
   DollarSign,
   PieChart,
+  X,
+  CheckCircle,
 } from 'lucide-react';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 
 interface FinanceModuleProps {
   subModule:
@@ -25,6 +28,29 @@ interface FinanceModuleProps {
   onNavigateTab?: (tab: string) => void;
 }
 
+const INITIAL_SAFE_DEPOSITS = [
+  {
+    id: 'FIN-202610-01',
+    date: '10 Okt 2026, 12:00 WIB',
+    type: 'SETORAN_BRANKAS',
+    from: 'Kasir Shift 1 (Laci POS)',
+    to: 'Bangkas Toko (Brankas)',
+    amount: 3000000,
+    note: 'Safe drop laci kasir siang hari',
+    actor: 'Supervisor Toko',
+  },
+  {
+    id: 'FIN-202610-02',
+    date: '09 Okt 2026, 17:30 WIB',
+    type: 'ALOKASI_UNTUNG',
+    from: 'Laba Penjualan Harian',
+    to: 'Bangkas Untung (Profit Vault)',
+    amount: 2450000,
+    note: 'Pemindahan profit bersih harian',
+    actor: 'Owner',
+  },
+];
+
 export const FinanceModule: React.FC<FinanceModuleProps> = ({
   subModule,
   currencyMode = 'IDR',
@@ -34,12 +60,52 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
     'bangkas_toko' | 'bangkas_modal' | 'bangkas_untung' | 'type_keuangan' | 'riwayat_keuangan'
   >(subModule);
 
+  // Firestore list for safe deposits
+  const { data: safeDeposits, addItem: addSafeDeposit } = useFirestoreList(
+    'safe_deposits',
+    INITIAL_SAFE_DEPOSITS
+  );
+
+  // Modal State for Setor Brankas
+  const [showSetorModal, setShowSetorModal] = useState(false);
+  const [setorAmount, setSetorAmount] = useState(3000000);
+  const [setorFrom, setSetorFrom] = useState('Kasir Shift 1 (Laci POS)');
+  const [setorActor, setSetorActor] = useState('Supervisor Toko');
+  const [setorNote, setSetorNote] = useState('Safe drop laci kasir');
+
   // Vault Balances
   const [vaults, setVaults] = useState({
     bangkasToko: 28450000, // Saldo fisik brankas toko (Safe Drop kasir)
     bangkasModal: 85000000, // Cadangan modal kerja pengadaan restock dus
     bangkasUntung: 34120000, // Laba bersih akumulatif siap bagi hasil/dividen
   });
+
+  const handleSaveSetor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!setorAmount || setorAmount <= 0) return;
+    const newDeposit = {
+      date: `${new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })}, ${new Date().toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })} WIB`,
+      type: 'SETORAN_BRANKAS',
+      from: setorFrom,
+      to: 'Bangkas Toko (Brankas)',
+      amount: Number(setorAmount),
+      note: setorNote || 'Setoran aman brankas toko',
+      actor: setorActor,
+    };
+    await addSafeDeposit(newDeposit);
+    setVaults((prev) => ({
+      ...prev,
+      bangkasToko: prev.bangkasToko + Number(setorAmount),
+    }));
+    setShowSetorModal(false);
+  };
 
   // Financial Account Types (Type Keuangan)
   const [accountTypes, setAccountTypes] = useState([
@@ -117,21 +183,20 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Vault className="w-6 h-6 text-emerald-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              MANAJEMEN KEUANGAN &amp; BANGKAS
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Pengendalian brankas kas fisik toko, brankas modal kerja, alokasi laba keuntungan bersih, dan riwayat jurnal keuangan.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Vault className="w-6 h-6 text-emerald-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            MANAJEMEN KEUANGAN &amp; BANGKAS
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Pengendalian brankas kas fisik toko, brankas modal kerja, alokasi laba keuntungan bersih, dan riwayat jurnal keuangan.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('bangkas_toko')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap flex items-center gap-1 ${
@@ -178,7 +243,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             <span>Riwayat Keuangan</span>
           </button>
         </div>
-      </div>
 
       {/* OVERVIEW THREE VAULTS WIDGET */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -240,12 +304,33 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <p className="text-xs text-zinc-400">Pengamanan uang tunai dari kasir setiap kali laci mencapai batas Rp 3.000.000.</p>
             </div>
             <button
-              onClick={() => alert('Form input setoran brankas toko baru dibuka!')}
+              onClick={() => setShowSetorModal(true)}
               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>+ Setor ke Brankas</span>
             </button>
+          </div>
+
+          {/* List of Recent Safe Drops */}
+          <div className="space-y-2 pt-2">
+            <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">Log Safe Drop Brankas</h4>
+            <div className="divide-y divide-zinc-800 border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950">
+              {safeDeposits.map((item) => (
+                <div key={item.id} className="p-3 flex items-center justify-between text-xs hover:bg-zinc-900/50">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white">{item.from}</span>
+                      <span className="text-[10px] text-zinc-500">{item.date}</span>
+                    </div>
+                    <p className="text-zinc-400 text-[11px] mt-0.5">{item.note} &bull; PIC: {item.actor}</p>
+                  </div>
+                  <span className="font-mono font-bold text-emerald-400">
+                    +Rp {item.amount.toLocaleString('id-ID')}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -338,7 +423,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
-                {historyLedger.map((hl) => (
+                {safeDeposits.map((hl) => (
                   <tr key={hl.id} className="hover:bg-zinc-800/40">
                     <td className="py-3 px-4 font-mono font-bold text-blue-400">{hl.id}</td>
                     <td className="py-3 px-4 text-zinc-400">{hl.date}</td>
@@ -355,6 +440,89 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Setor ke Brankas */}
+      {showSetorModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Vault className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Setor Uang Kasir ke Brankas</h3>
+              </div>
+              <button
+                onClick={() => setShowSetorModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveSetor} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nominal Setoran (Rp) *</label>
+                <input
+                  type="number"
+                  required
+                  min={10000}
+                  step={10000}
+                  value={setorAmount}
+                  onChange={(e) => setSetorAmount(Number(e.target.value))}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono text-base font-bold focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Dari Sumber</label>
+                  <select
+                    value={setorFrom}
+                    onChange={(e) => setSetorFrom(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="Kasir Shift 1 (Laci POS)">Kasir Shift 1 (Laci POS)</option>
+                    <option value="Kasir Shift 2 (Laci POS)">Kasir Shift 2 (Laci POS)</option>
+                    <option value="Kasir Cabang Tebet">Kasir Cabang Tebet</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Petugas / Penyetor</label>
+                  <input
+                    type="text"
+                    required
+                    value={setorActor}
+                    onChange={(e) => setSetorActor(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Keterangan / Catatan Safe Drop</label>
+                <input
+                  type="text"
+                  value={setorNote}
+                  onChange={(e) => setSetorNote(e.target.value)}
+                  placeholder="Misal: Safe drop siang, laci melebihi batas"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowSetorModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition shadow-lg"
+                >
+                  Konfirmasi Setoran
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

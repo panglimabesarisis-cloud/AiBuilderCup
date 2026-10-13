@@ -125,21 +125,20 @@ export const PWASettingsModule: React.FC<PWASettingsModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Smartphone className="w-6 h-6 text-purple-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              PENGATURAN CLIENT PWA
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            5.20 &mdash; Pengaturan terpisah PWA: branding aplikasi, aturan order pelanggan, gateway notifikasi, checkout pembayaran, dan otentikasi hak akses.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Smartphone className="w-6 h-6 text-purple-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            PENGATURAN CLIENT PWA
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          5.20 &mdash; Pengaturan terpisah PWA: branding aplikasi, aturan order pelanggan, gateway notifikasi, checkout pembayaran, dan otentikasi hak akses.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('umum')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
@@ -185,7 +184,6 @@ export const PWASettingsModule: React.FC<PWASettingsModuleProps> = ({
             <span>Hak dan Akses</span>
           </button>
         </div>
-      </div>
 
       {/* Security and Separation Notice */}
       <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-900/60 flex items-start gap-3 text-xs text-purple-200">

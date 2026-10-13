@@ -12,7 +12,10 @@ import {
   Percent,
   TrendingUp,
   Tag,
+  X,
+  Save,
 } from 'lucide-react';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 
 interface MarketingModuleProps {
   subModule:
@@ -26,6 +29,53 @@ interface MarketingModuleProps {
   onNavigateTab?: (tab: string) => void;
 }
 
+const INITIAL_VOUCHERS = [
+  {
+    id: 'VOUCH-01',
+    code: 'WEEKENDHEMAT',
+    discountType: 'Nominal Potongan',
+    discountValue: 15000,
+    minSpend: 100000,
+    usageCount: 142,
+    maxUsage: 300,
+    validUntil: '15 Okt 2026',
+    status: 'active',
+  },
+  {
+    id: 'VOUCH-02',
+    code: 'PWAMEMBER5',
+    discountType: 'Persentase Diskon',
+    discountValue: 5,
+    minSpend: 50000,
+    usageCount: 420,
+    maxUsage: 1000,
+    validUntil: '31 Des 2026',
+    status: 'active',
+  },
+  {
+    id: 'VOUCH-03',
+    code: 'GROSIRSERU',
+    discountType: 'Gratis Ongkir Dus',
+    discountValue: 10000,
+    minSpend: 300000,
+    usageCount: 68,
+    maxUsage: 150,
+    validUntil: '20 Okt 2026',
+    status: 'active',
+  },
+];
+
+const INITIAL_POINT_RULES = [
+  {
+    id: 'RULE-POS-01',
+    name: 'Aturan Poin POS Kasir',
+    pointRatio: 10000,
+    pointValueRupiah: 50,
+    notes: 'Default konfigurasi toko',
+    updatedAtText: '10 Okt 2026',
+  },
+];
+
 export const MarketingModule: React.FC<MarketingModuleProps> = ({
   subModule,
   currencyMode = 'IDR',
@@ -35,42 +85,59 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
     'hadiah_target' | 'informasi_hadiah' | 'voucher_promo' | 'setting_poin' | 'setting_poin_pwa' | 'statistik_marketing'
   >(subModule);
 
-  // Vouchers
-  const [vouchers, setVouchers] = useState([
-    {
-      id: 'VOUCH-01',
-      code: 'WEEKENDHEMAT',
-      discountType: 'Nominal Potongan',
-      discountValue: 15000,
-      minSpend: 100000,
-      usageCount: 142,
-      maxUsage: 300,
-      validUntil: '15 Okt 2026',
+  // Vouchers & Point Rules from Firestore via useFirestoreList
+  const { data: vouchers, addItem: addVoucher } = useFirestoreList('vouchers', INITIAL_VOUCHERS);
+  const { data: pointRules, addItem: addPointRule } = useFirestoreList('point_rules', INITIAL_POINT_RULES);
+
+  // Modal States
+  const [showAddVoucherModal, setShowAddVoucherModal] = useState(false);
+  const [newVouchCode, setNewVouchCode] = useState('');
+  const [newVouchType, setNewVouchType] = useState('Nominal Potongan');
+  const [newVouchVal, setNewVouchVal] = useState(10000);
+  const [newVouchMinSpend, setNewVouchMinSpend] = useState(50000);
+  const [newVouchMaxUsage, setNewVouchMaxUsage] = useState(100);
+  const [newVouchValidUntil, setNewVouchValidUntil] = useState('31 Des 2026');
+
+  const [showSavePointRuleModal, setShowSavePointRuleModal] = useState(false);
+  const [pointRuleNotes, setPointRuleNotes] = useState('Pembaruan aturan poin loyalty kasir');
+  const [pointRuleSuccess, setPointRuleSuccess] = useState(false);
+
+  // Points Configuration
+  const [pointRatio, setPointRatio] = useState(10000); // Rp 10.000 = 1 Poin
+  const [pointValueRupiah, setPointValueRupiah] = useState(50); // 1 Poin = Rp 50
+
+  const handleSaveVoucher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newVouchCode.trim()) return;
+    await addVoucher({
+      code: newVouchCode.trim().toUpperCase(),
+      discountType: newVouchType,
+      discountValue: Number(newVouchVal),
+      minSpend: Number(newVouchMinSpend),
+      usageCount: 0,
+      maxUsage: Number(newVouchMaxUsage),
+      validUntil: newVouchValidUntil,
       status: 'active',
-    },
-    {
-      id: 'VOUCH-02',
-      code: 'PWAMEMBER5',
-      discountType: 'Persentase Diskon',
-      discountValue: 5,
-      minSpend: 50000,
-      usageCount: 420,
-      maxUsage: 1000,
-      validUntil: '31 Des 2026',
-      status: 'active',
-    },
-    {
-      id: 'VOUCH-03',
-      code: 'GROSIRSERU',
-      discountType: 'Gratis Ongkir Dus',
-      discountValue: 10000,
-      minSpend: 300000,
-      usageCount: 68,
-      maxUsage: 150,
-      validUntil: '20 Okt 2026',
-      status: 'active',
-    },
-  ]);
+    });
+    setNewVouchCode('');
+    setShowAddVoucherModal(false);
+  };
+
+  const handleConfirmSavePointRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await addPointRule({
+      name: 'Aturan Poin POS Kasir',
+      pointRatio: Number(pointRatio),
+      pointValueRupiah: Number(pointValueRupiah),
+      notes: pointRuleNotes,
+      updatedAtText: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+    });
+    setPointRuleSuccess(true);
+    setTimeout(() => {
+      setShowSavePointRuleModal(false);
+      setPointRuleSuccess(false);
+    }, 1500);
+  };
 
   // Target Gamification (Hadiah Target)
   const [targets, setTargets] = useState([
@@ -92,28 +159,23 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
     },
   ]);
 
-  // Points Configuration
-  const [pointRatio, setPointRatio] = useState(10000); // Rp 10.000 = 1 Poin
-  const [pointValueRupiah, setPointValueRupiah] = useState(50); // 1 Poin = Rp 50
-
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Target className="w-6 h-6 text-indigo-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              TEKNIK MARKETING &amp; PROMOSI
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Program retensi pelanggan, hadiah target penjualan, kupon voucher promo, pengaturan loyalty poin POS &amp; PWA.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Target className="w-6 h-6 text-indigo-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            TEKNIK MARKETING &amp; PROMOSI
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Program retensi pelanggan, hadiah target penjualan, kupon voucher promo, pengaturan loyalty poin POS &amp; PWA.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('hadiah_target')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap flex items-center gap-1 ${
@@ -169,7 +231,6 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
             <span>Statistik Marketing</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: HADIAH TARGET */}
       {activeSub === 'hadiah_target' && (
@@ -218,7 +279,7 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
               Kupon Kode Promo Aktif
             </h3>
             <button
-              onClick={() => alert('Form voucher baru dibuka')}
+              onClick={() => setShowAddVoucherModal(true)}
               className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -286,7 +347,7 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
               />
             </div>
             <button
-              onClick={() => alert('Aturan poin kasir disimpan!')}
+              onClick={() => setShowSavePointRuleModal(true)}
               className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition cursor-pointer"
             >
               Simpan Konfigurasi Poin
@@ -347,6 +408,179 @@ export const MarketingModule: React.FC<MarketingModuleProps> = ({
               142 Member
             </span>
             <span className="text-zinc-400 text-[11px] mt-1 block">Repeat order rate: 64%</span>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Buat Kupon Baru */}
+      {showAddVoucherModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Ticket className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Buat Kupon Promo Baru</h3>
+              </div>
+              <button
+                onClick={() => setShowAddVoucherModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveVoucher} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Kode Kupon / Promo *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: BERKAH10 / JUMATHEMAT"
+                  value={newVouchCode}
+                  onChange={(e) => setNewVouchCode(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono uppercase tracking-wider font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Tipe Potongan</label>
+                  <select
+                    value={newVouchType}
+                    onChange={(e) => setNewVouchType(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="Nominal Potongan">Nominal Potongan (Rp)</option>
+                    <option value="Persentase Diskon">Persentase Diskon (%)</option>
+                    <option value="Gratis Ongkir Dus">Gratis Ongkir Dus</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Nilai Potongan</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={newVouchVal}
+                    onChange={(e) => setNewVouchVal(Number(e.target.value))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Min. Belanja (Rp)</label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    step={5000}
+                    value={newVouchMinSpend}
+                    onChange={(e) => setNewVouchMinSpend(Number(e.target.value))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Batas Kuota Pemakaian</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={newVouchMaxUsage}
+                    onChange={(e) => setNewVouchMaxUsage(Number(e.target.value))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Berlaku Sampai Tanggal</label>
+                <input
+                  type="text"
+                  placeholder="31 Des 2026"
+                  value={newVouchValidUntil}
+                  onChange={(e) => setNewVouchValidUntil(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddVoucherModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition shadow-lg"
+                >
+                  Terbitkan Kupon
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Simpan Aturan Poin */}
+      {showSavePointRuleModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Save className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Simpan Aturan Poin Loyalitas</h3>
+              </div>
+              <button
+                onClick={() => setShowSavePointRuleModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleConfirmSavePointRule} className="space-y-4 pt-4 text-xs">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-400">Rasio Belanja per Poin:</span>
+                  <span className="font-mono font-bold text-white">Rp {pointRatio.toLocaleString('id-ID')} = 1 Poin</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-400">Nilai Tukar 1 Poin:</span>
+                  <span className="font-mono font-bold text-emerald-400">Rp {pointValueRupiah.toLocaleString('id-ID')}</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Catatan Pembaruan Kebijakan Toko</label>
+                <input
+                  type="text"
+                  required
+                  value={pointRuleNotes}
+                  onChange={(e) => setPointRuleNotes(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {pointRuleSuccess && (
+                <div className="p-3 bg-emerald-950 border border-emerald-800 text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span>Aturan poin loyalitas berhasil disimpan dan disinkronkan ke Cloud Firestore!</span>
+                </div>
+              )}
+
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowSavePointRuleModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition shadow-lg"
+                >
+                  Simpan ke Firestore
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

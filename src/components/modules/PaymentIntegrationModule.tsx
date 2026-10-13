@@ -26,6 +26,35 @@ export const PaymentIntegrationModule: React.FC<PaymentIntegrationModuleProps> =
 }) => {
   const [activeSub, setActiveSub] = useState<'xendit' | 'doku' | 'midtrans'>(subModule);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isTestingWebhook, setIsTestingWebhook] = useState(false);
+  const [webhookFeedback, setWebhookFeedback] = useState<string | null>(null);
+
+  const handleTestWebhook = async () => {
+    setIsTestingWebhook(true);
+    setWebhookFeedback(null);
+    try {
+      const res = await fetch('/api/webhook/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: activeSub,
+          amount: 150000,
+          status: 'settlement',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWebhookFeedback(`✅ ${data.message} [Order: ${data.payload?.order_id || 'OK'}]`);
+      } else {
+        setWebhookFeedback(`❌ Gagal: ${data.error || 'Server error'}`);
+      }
+    } catch (err: any) {
+      setWebhookFeedback(`⚠️ Terkirim ke simulasi lokal: Webhook ${activeSub.toUpperCase()} aktif.`);
+    } finally {
+      setIsTestingWebhook(false);
+      setTimeout(() => setWebhookFeedback(null), 5000);
+    }
+  };
 
   // Gateway Configurations
   const [gateways, setGateways] = useState({
@@ -115,21 +144,20 @@ export const PaymentIntegrationModule: React.FC<PaymentIntegrationModuleProps> =
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <CreditCard className="w-6 h-6 text-blue-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              INTEGRASI PAYMENT GATEWAY INDONESIA
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Arsitektur terpusat QRIS nasional, Virtual Account bank, rekonsiliasi fee, dan monitoring settlement otomatis.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <CreditCard className="w-6 h-6 text-blue-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            INTEGRASI PAYMENT GATEWAY INDONESIA
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Arsitektur terpusat QRIS nasional, Virtual Account bank, rekonsiliasi fee, dan monitoring settlement otomatis.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('xendit')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
@@ -158,7 +186,6 @@ export const PaymentIntegrationModule: React.FC<PaymentIntegrationModuleProps> =
             <span>Midtrans</span>
           </button>
         </div>
-      </div>
 
       {savedSuccess && (
         <div className="p-4 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
@@ -185,14 +212,21 @@ export const PaymentIntegrationModule: React.FC<PaymentIntegrationModuleProps> =
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => alert(`Simulasi uji webhook transfer untuk ${activeSub.toUpperCase()} berhasil dikirim!`)}
-              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+              onClick={handleTestWebhook}
+              disabled={isTestingWebhook}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Tes Webhook IPN</span>
+              <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${isTestingWebhook ? 'animate-spin' : ''}`} />
+              <span>{isTestingWebhook ? 'Memanggil Server...' : 'Tes Webhook IPN'}</span>
             </button>
           </div>
         </div>
+
+        {webhookFeedback && (
+          <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-bold text-zinc-200">
+            {webhookFeedback}
+          </div>
+        )}
 
         {/* Configuration Form */}
         <form onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { FraudLog } from '../../types';
+import { FraudLog, Transaction } from '../../types';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -19,6 +19,7 @@ import {
 
 export const AntiFraudInspector: React.FC = () => {
   const [fraudLogs, setFraudLogs] = useState<FraudLog[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [auditResult, setAuditResult] = useState<any | null>(null);
 
@@ -29,6 +30,29 @@ export const AntiFraudInspector: React.FC = () => {
   const [sandboxDistance, setSandboxDistance] = useState<number>(4500); // meters
   const [sandboxAccuracy, setSandboxAccuracy] = useState<number>(0); // 0 = mock GPS
   const [sandboxVelocity, setSandboxVelocity] = useState<number>(3);
+
+  // Subscribe to live transactions from Firestore
+  useEffect(() => {
+    const q = query(
+      collection(db, 'transactions'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubTx = onSnapshot(
+      q,
+      (snapshot) => {
+        const txList: Transaction[] = [];
+        snapshot.forEach((docSnap) => {
+          txList.push({ id: docSnap.id, ...(docSnap.data() as Omit<Transaction, 'id'>) });
+        });
+        setTransactions(txList);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'transactions')
+    );
+
+    return () => unsubTx();
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -49,31 +73,68 @@ export const AntiFraudInspector: React.FC = () => {
   const handleRunAiAudit = async () => {
     setIsAuditing(true);
     try {
-      const payload = {
-        channel: sandboxChannel,
-        totalAmount: sandboxAmount,
-        items: [
-          {
-            productName: 'Indomie Mi Goreng Special',
-            packageType: 'carton',
-            quantityOrdered: sandboxCartons,
-            unitPrice: 20.0,
-          },
-        ],
-        customerPhone: '+6281987654321',
-        customerLatitude: -6.2088 + (sandboxDistance / 111000), // approximate lat offset
-        customerLongitude: 106.8456,
-        gpsAccuracy: sandboxAccuracy,
-        storeLatitude: -6.2088,
-        storeLongitude: 106.8456,
-        geofenceRadiusMeters: 500,
-        velocityCount: sandboxVelocity,
+      // Build sample simulation item for payload context
+      const sampleItem = {
+        productName: 'Indomie Mi Goreng Special',
+        packageType: 'carton',
+        quantityOrdered: sandboxCartons,
+        unitPrice: 20.0,
       };
 
-      const res = await fetch('/api/ai/anti-fraud', {
+      // Construct live batch combining recent Firestore transactions and current sandbox simulation
+      const liveTxBatch = transactions.length > 0
+        ? transactions.slice(0, 30).map((t) => ({
+            id: t.id,
+            channel: t.channel,
+            totalAmount: t.totalAmount,
+            status: t.status,
+            customerName: t.customerName,
+            customerPhone: t.customerPhone,
+            paymentMethod: t.paymentMethod,
+            distanceToStoreMeters: t.distanceToStoreMeters,
+            gpsAccuracy: t.gpsAccuracy,
+            fraudScore: t.fraudScore,
+            fraudFlags: t.fraudFlags,
+            createdAt: t.createdAt,
+          }))
+        : [
+            {
+              id: 'sim_tx_001',
+              channel: sandboxChannel,
+              totalAmount: sandboxAmount,
+              status: 'pending_approval',
+              customerPhone: '+6281987654321',
+              customerLatitude: -6.2088 + sandboxDistance / 111000,
+              customerLongitude: 106.8456,
+              gpsAccuracy: sandboxAccuracy,
+              distanceToStoreMeters: sandboxDistance,
+              items: [sampleItem],
+              createdAt: new Date().toISOString(),
+            },
+          ];
+
+      // Variance logs synthesizing any unrecorded/discrepancy patterns
+      const varianceLogs = [
+        {
+          id: 'var_log_001',
+          sku: 'IND-MGR-01',
+          productName: 'Indomie Mi Goreng Special (Dus)',
+          recordedSalesCount: sandboxCartons,
+          physicalStockDeducted: sandboxCartons + (sandboxDistance > 500 ? 2 : 0),
+          discrepancyVariance: sandboxDistance > 500 ? -2 : 0,
+          reason: sandboxDistance > 500 ? 'Stock missing without POS record' : 'Normal inventory depletion',
+        },
+      ];
+
+      const res = await fetch('/api/ai/fraud-audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          transactions: liveTxBatch,
+          inventoryVariances: varianceLogs,
+          timeRange: 'last_30_records',
+          agentKey: 'agent_fraud_audit',
+        }),
       });
 
       const data = await res.json();
@@ -338,32 +399,35 @@ export const AntiFraudInspector: React.FC = () => {
 
         {/* Live Evaluation Result Card */}
         {auditResult && (
-          <div className="p-5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-3 animate-in fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="p-5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-4 animate-in fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div
                   className={`px-3 py-1.5 rounded-xl font-black font-mono text-xl ${
-                    auditResult.fraudScore >= 75
+                    (auditResult.riskScore ?? auditResult.fraudScore ?? 0) >= 75
                       ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                      : auditResult.fraudScore >= 45
+                      : (auditResult.riskScore ?? auditResult.fraudScore ?? 0) >= 45
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                       : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                   }`}
                 >
-                  Score: {auditResult.fraudScore} / 100
+                  Risk Score: {auditResult.riskScore ?? auditResult.fraudScore ?? 0} / 100
                 </div>
 
                 <div>
                   <div className="text-xs font-bold text-white uppercase tracking-wider">
-                    Risk Verdict: {auditResult.riskLevel}
+                    Risk Verdict: {auditResult.riskLevel || ((auditResult.riskScore ?? auditResult.fraudScore ?? 0) >= 75 ? 'critical' : (auditResult.riskScore ?? auditResult.fraudScore ?? 0) >= 45 ? 'high' : 'clean')}
                   </div>
                   <div className="text-[11px] text-zinc-500">
-                    Decision: <strong>{auditResult.recommendation.toUpperCase()}</strong>
+                    Anomalies Detected: <strong>{auditResult.anomalyCount ?? auditResult.flaggedItems?.length ?? 0}</strong>
+                    {auditResult.recommendation && (
+                      <span className="ml-2">| Decision: <strong>{String(auditResult.recommendation).toUpperCase()}</strong></span>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Triggered Flags */}
+              {/* Triggered Flags / Anomaly Types */}
               <div className="flex flex-wrap gap-1.5">
                 {auditResult.fraudFlags?.map((f: string, i: number) => (
                   <span
@@ -373,13 +437,64 @@ export const AntiFraudInspector: React.FC = () => {
                     {f}
                   </span>
                 ))}
+                {auditResult.flaggedItems?.slice(0, 4).map((item: any, i: number) => (
+                  <span
+                    key={`flagged-${i}`}
+                    className="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950/60 text-rose-300 border border-rose-800/50"
+                  >
+                    {item.type || item.severity}
+                  </span>
+                ))}
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-850 text-xs text-zinc-300 leading-relaxed">
-              <strong className="text-white block mb-1">Gemini AI Forensic Rationale:</strong>
-              {auditResult.aiExplanation}
+            {/* AI Forensic Rationale & Summary */}
+            <div className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 leading-relaxed space-y-1.5">
+              <strong className="text-white flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-rose-400" />
+                Gemini 2.5 Flash Forensic Audit Rationale:
+              </strong>
+              <p className="text-zinc-300 text-xs leading-relaxed">
+                {auditResult.summary || auditResult.aiExplanation || 'Analisis forensik selesai dijalankan.'}
+              </p>
             </div>
+
+            {/* Detailed Flagged Items & Anomaly Explanations */}
+            {Array.isArray(auditResult.flaggedItems) && auditResult.flaggedItems.length > 0 && (
+              <div className="space-y-2 pt-1 border-t border-zinc-850">
+                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  Gemini Anomaly Explanations ({auditResult.flaggedItems.length}):
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {auditResult.flaggedItems.map((item: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[10px] font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
+                          {item.type}
+                        </span>
+                        <span className={`text-[10px] font-semibold uppercase ${
+                          item.severity === 'critical' ? 'text-rose-400' : item.severity === 'high' ? 'text-amber-400' : 'text-zinc-400'
+                        }`}>
+                          {item.severity} severity
+                        </span>
+                      </div>
+                      <p className="text-zinc-300 text-[11px] leading-snug">
+                        {item.reason}
+                      </p>
+                      {item.referenceId && (
+                        <div className="text-[10px] text-zinc-500 font-mono truncate">
+                          Ref: {item.referenceId}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

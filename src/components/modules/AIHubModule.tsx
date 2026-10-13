@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Cpu,
   Sparkles,
@@ -46,12 +46,59 @@ import {
   ShieldCheck,
   AlertOctagon,
   Trash2,
+  Users,
+  QrCode,
+  ScanLine,
+  Award,
+  Mic,
+  Volume2,
 } from 'lucide-react';
+import { collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { AIInstructionKnowledgePanel } from './AIInstructionKnowledgePanel';
 import { useLanguage } from '../../context/LanguageContext';
 
+export type AIAgentSlug =
+  | 'anti-fraud-sentinel'
+  | 'ai-advisor-purchase'
+  | 'order-intent-parser'
+  | 'strategic-restock-advisor'
+  | 'business-copilot'
+  | 'dynamic-pricing'
+  | 'customer-retention'
+  | 'loss-prevention'
+  | 'supplier-anomaly'
+  | 'staff-kpi'
+  | 'scanner-ai';
+
+export interface AIAgent {
+  id: string;
+  name: string;
+  category: string;
+  role: string;
+  model: string;
+  provider: string;
+  status: 'active' | 'standby' | 'paused';
+  allowedTools: string[];
+  dataAccess: string[];
+  systemPrompt: string;
+  temperature: number;
+  version: string;
+}
+
+interface AILog {
+  id: string;
+  agentKey: string;
+  latencyMs: number;
+  tokenIn: number;
+  tokenOut: number;
+  ok: boolean;
+  ts: any;
+}
+
 interface AIHubModuleProps {
   subModule:
+    | AIAgentSlug
     | 'ai_master'
     | 'ai_advisor_purchase'
     | 'ai_advisor_order'
@@ -60,7 +107,8 @@ interface AIHubModuleProps {
     | 'ai_preventif'
     | 'ai_fraud_transaction'
     | 'ai_knowledge'
-    | 'tanya_ai';
+    | 'tanya_ai'
+    | string;
   onNavigateTab?: (tab: string) => void;
   currencyMode?: 'IDR' | 'USD';
 }
@@ -73,230 +121,152 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
   const { t, language } = useLanguage();
 
   // ==========================================
-  // 5.1 MASTER AI STATE & REGISTRY (11 AGENTS)
+  // 5.1 MASTER AI STATE & REGISTRY (READ FROM FIRESTORE ai_agents & ai_logs)
   // ==========================================
-  const [agents, setAgents] = useState([
-    {
-      id: 'agent_1',
-      name: 'Anti-Fraud Sentinel AI',
-      category: 'Security & Fraud',
-      role: 'Transaction Anomaly, Mock GPS & Geofence Inspector',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 142,
-      callsToday: 1240,
-      accuracy: '99.4%',
-      tokensToday: 154200,
-      costToday: 'Rp 2.450',
-      failureRate: '0.04%',
-      allowedTools: ['calculateHaversineDistance', 'fraudScoreEvaluator', 'mockGpsDetector', 'ipRiskAnalyzer'],
-      dataAccess: ['transactions', 'stores_geofence', 'customer_locations'],
-      systemPrompt: 'Inspect POS & PWA orders for spatial discrepancy (>500m geofence), simulated GPS coordinates, rapid velocity checkout spikes, and anomalous card/qris payment profiles.',
-      temperature: 0.1,
-      version: 'v3.2.0',
+  const [agents, setAgents] = useState<AIAgent[]>([]);
+  const [aiLogs, setAiLogs] = useState<AILog[]>([]);
+
+  // Subscribe to Firestore ai_agents collection
+  useEffect(() => {
+    const colRef = collection(db, 'ai_agents');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const loaded: AIAgent[] = [];
+        snapshot.forEach((docSnap) => {
+          const d = docSnap.data();
+          loaded.push({
+            id: docSnap.id,
+            name: d.name || 'AI Agent',
+            category: d.category || 'Operasional',
+            role: d.role || '',
+            model: d.model || 'gemini-3.8-flash',
+            provider: d.provider || 'Google GenAI Cloud',
+            status: d.status || 'active',
+            allowedTools: Array.isArray(d.allowedTools) ? d.allowedTools : [],
+            dataAccess: Array.isArray(d.dataAccess) ? d.dataAccess : [],
+            systemPrompt: d.systemPrompt || '',
+            temperature: typeof d.temperature === 'number' ? d.temperature : 0.2,
+            version: d.version || 'v1.0.0',
+          });
+        });
+        setAgents(loaded);
+      },
+      (err) => {
+        console.warn('Error listening to ai_agents:', err);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to Firestore ai_logs collection
+  useEffect(() => {
+    const colRef = collection(db, 'ai_logs');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const loadedLogs: AILog[] = [];
+        snapshot.forEach((docSnap) => {
+          const d = docSnap.data();
+          loadedLogs.push({
+            id: docSnap.id,
+            agentKey: d.agentKey || '',
+            latencyMs: Number(d.latencyMs) || 0,
+            tokenIn: Number(d.tokenIn) || 0,
+            tokenOut: Number(d.tokenOut) || 0,
+            ok: d.ok !== false,
+            ts: d.ts,
+          });
+        });
+        setAiLogs(loadedLogs);
+      },
+      (err) => {
+        console.warn('Error listening to ai_logs:', err);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Filter logs for today (local day)
+  const todayLogs = useMemo(() => {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+
+    return aiLogs.filter((log) => {
+      let timeMs = 0;
+      if (log.ts?.toDate) {
+        timeMs = log.ts.toDate().getTime();
+      } else if (log.ts?.seconds) {
+        timeMs = log.ts.seconds * 1000;
+      } else if (typeof log.ts === 'string' || typeof log.ts === 'number') {
+        timeMs = new Date(log.ts).getTime();
+      }
+      return timeMs >= startOfDay && timeMs < endOfDay;
+    });
+  }, [aiLogs]);
+
+  // Global metrics today computed from ai_logs (empty shows 0)
+  const metricsToday = useMemo(() => {
+    const count = todayLogs.length;
+    if (count === 0) {
+      return {
+        totalCalls: 0,
+        avgLatencyMs: 0,
+        totalTokens: 0,
+        totalCostIdr: 0,
+      };
+    }
+
+    const totalLatency = todayLogs.reduce((acc, l) => acc + (l.latencyMs || 0), 0);
+    const totalTokens = todayLogs.reduce((acc, l) => acc + (l.tokenIn || 0) + (l.tokenOut || 0), 0);
+    const costIdr = Math.round((totalTokens / 1000) * 16);
+
+    return {
+      totalCalls: count,
+      avgLatencyMs: Math.round(totalLatency / count),
+      totalTokens,
+      totalCostIdr: costIdr,
+    };
+  }, [todayLogs]);
+
+  // Per-agent metrics computed from ai_logs (empty shows 0)
+  const getAgentMetricsToday = useCallback(
+    (agentId: string) => {
+      const agentLogs = todayLogs.filter(
+        (l) =>
+          l.agentKey === agentId ||
+          (agentId === 'agent_1' && (l.agentKey === 'anti_fraud' || l.agentKey === 'agent_fraud')) ||
+          (agentId === 'agent_2' && (l.agentKey === 'agent_order' || l.agentKey === 'parse_order')) ||
+          (agentId === 'agent_3' && (l.agentKey === 'agent_restock' || l.agentKey === 'restock_advisor')) ||
+          (agentId === 'agent_purchase' && l.agentKey === 'agent_purchase')
+      );
+      const count = agentLogs.length;
+      if (count === 0) {
+        return {
+          callsToday: 0,
+          latencyMs: 0,
+          tokensToday: 0,
+          costToday: 'Rp 0',
+          failureRate: '0%',
+        };
+      }
+
+      const totalLatency = agentLogs.reduce((acc, l) => acc + (l.latencyMs || 0), 0);
+      const totalTokens = agentLogs.reduce((acc, l) => acc + (l.tokenIn || 0) + (l.tokenOut || 0), 0);
+      const failures = agentLogs.filter((l) => !l.ok).length;
+      const cost = Math.round((totalTokens / 1000) * 16);
+
+      return {
+        callsToday: count,
+        latencyMs: Math.round(totalLatency / count),
+        tokensToday: totalTokens,
+        costToday: `Rp ${cost.toLocaleString('id-ID')}`,
+        failureRate: `${((failures / count) * 100).toFixed(1)}%`,
+      };
     },
-    {
-      id: 'agent_purchase',
-      name: 'AI Advisor Purchase (7-Day Lock)',
-      category: 'Procurement & Stock Runway',
-      role: 'Sales-to-Inventory Runway Forecasting & 7-Day Stock Lock Restock Enforcer',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 190,
-      callsToday: 410,
-      accuracy: '99.2%',
-      tokensToday: 76500,
-      costToday: 'Rp 1.220',
-      failureRate: '0.05%',
-      allowedTools: ['calculateRunwayDays', 'lockRestockOrder', 'salesVelocity7DayMovingAvg', 'poDirectDispatcher'],
-      dataAccess: ['inventory_ledger', 'sales_receipts', 'supplier_agreements'],
-      systemPrompt: 'Evaluate available stock against 7-day average sales velocity. If remaining stock runway is strictly under 1 week (< 7 days), lock status as MANDATORY RESTOCK (WAJIB RESTOCK) and compute optimal supplier carton replenishment with locked purchase quantities.',
-      temperature: 0.1,
-      version: 'v3.5.0',
-    },
-    {
-      id: 'agent_2',
-      name: 'Order Intent & Typo Parser',
-      category: 'POS & Order',
-      role: 'Conversational Natural Language Ordering & Typo Tolerant Parser',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 185,
-      callsToday: 820,
-      accuracy: '98.8%',
-      tokensToday: 98400,
-      costToday: 'Rp 1.580',
-      failureRate: '0.08%',
-      allowedTools: ['catalogMatcher', 'typoToleranceMapper', 'cartonBundleDetector', 'phoneticSearch'],
-      dataAccess: ['products_catalog', 'variants', 'carton_specs'],
-      systemPrompt: 'Extract structured product entities, quantity multipliers, packaging types (pcs vs carton/dus), and delivery intent from noisy WhatsApp / PWA chat input.',
-      temperature: 0.2,
-      version: 'v2.8.4',
-    },
-    {
-      id: 'agent_3',
-      name: 'Strategic Restock Advisor',
-      category: 'Inventory & PO',
-      role: 'Autonomous Inventory, Lead Time & PO Replenishment Predictor',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 210,
-      callsToday: 340,
-      accuracy: '97.2%',
-      tokensToday: 64200,
-      costToday: 'Rp 1.020',
-      failureRate: '0.12%',
-      allowedTools: ['velocityCalculator', 'cartonReplenisher', 'poDraftGenerator', 'safetyStockEstimator'],
-      dataAccess: ['stock_ledger', 'supplier_catalog', 'order_velocity'],
-      systemPrompt: 'Monitor warehouse and store physical stock mutations. Forecast stock-out dates based on 14-day velocity and draft wholesale purchase orders.',
-      temperature: 0.3,
-      version: 'v2.5.1',
-    },
-    {
-      id: 'agent_4',
-      name: 'Tanya AI Business Copilot',
-      category: 'BI & Copilot',
-      role: 'Omni-channel Cashier & Owner Knowledge Copilot',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 160,
-      callsToday: 490,
-      accuracy: '99.1%',
-      tokensToday: 112500,
-      costToday: 'Rp 1.790',
-      failureRate: '0.05%',
-      allowedTools: ['salesAnalyticsQuery', 'sopSearch', 'customerKasbonLookup', 'profitMarginAudit'],
-      dataAccess: ['all_tenant_isolated_documents'],
-      systemPrompt: 'Provide real-time operational answers to cashiers and store owners on daily profit, critical stock, kasbon history, and store procedures.',
-      temperature: 0.4,
-      version: 'v4.1.0',
-    },
-    {
-      id: 'agent_5',
-      name: 'Dynamic Pricing Optimizer',
-      category: 'Pricing & BI',
-      role: 'Wholesale Carton Price Matrix & Margin Yield Maximizer',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 195,
-      callsToday: 275,
-      accuracy: '98.5%',
-      tokensToday: 48900,
-      costToday: 'Rp 780',
-      failureRate: '0.06%',
-      allowedTools: ['marginCalculator', 'bulkDiscountCurveEvaluator', 'competitorPriceIndex'],
-      dataAccess: ['cogs_ledger', 'pricing_tiers', 'wholesale_rules'],
-      systemPrompt: 'Calculate optimal tier prices for dus/karton conversions, ensuring cashier gross margins remain strictly above target thresholds (>28%).',
-      temperature: 0.2,
-      version: 'v1.9.0',
-    },
-    {
-      id: 'agent_6',
-      name: 'Customer Retention & Churn AI',
-      category: 'CRM & Loyalty',
-      role: 'Loyalty RFM Scoring, Kasbon Risk & Targeted Rewards Dispatcher',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 175,
-      callsToday: 190,
-      accuracy: '96.9%',
-      tokensToday: 38200,
-      costToday: 'Rp 610',
-      failureRate: '0.15%',
-      allowedTools: ['rfmSegmentation', 'kasbonCreditLimitChecker', 'voucherRecommendationEngine'],
-      dataAccess: ['customers', 'kasbon_ledger', 'loyalty_points'],
-      systemPrompt: 'Analyze customer purchase frequency and outstanding debts. Recommend personalized VIP discounts or alert store managers before granting extra credit limit.',
-      temperature: 0.3,
-      version: 'v2.1.2',
-    },
-    {
-      id: 'agent_7',
-      name: 'Loss Prevention & Cash Anomaly AI',
-      category: 'Cashier & Audit',
-      role: 'Shift Register Audit & Physical Cash Drawer Anomaly Detector',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 130,
-      callsToday: 512,
-      accuracy: '99.7%',
-      tokensToday: 76800,
-      costToday: 'Rp 1.220',
-      failureRate: '0.02%',
-      allowedTools: ['cashFloatVarianceAnalyzer', 'refundVelocityMonitor', 'voidTransactionAudit'],
-      dataAccess: ['shift_records', 'cash_in_out', 'pos_drawer_logs'],
-      systemPrompt: 'Cross-examine expected drawer cash against shift close physical counts. Detect unusual cashier discounts, cancelled orders, and cash shortages in real time.',
-      temperature: 0.1,
-      version: 'v3.0.1',
-    },
-    {
-      id: 'agent_8',
-      name: 'Supplier Price Anomaly AI',
-      category: 'Supply Chain',
-      role: 'Procurement Cost Spike & Delivery Delay Forecaster',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 220,
-      callsToday: 165,
-      accuracy: '97.6%',
-      tokensToday: 29400,
-      costToday: 'Rp 470',
-      failureRate: '0.09%',
-      allowedTools: ['supplierDelayPredictor', 'cogsSpikeDetector', 'poFulfillmentTracker'],
-      dataAccess: ['suppliers', 'purchase_orders', 'warehouse_receipts'],
-      systemPrompt: 'Detect supplier price surges across carton deliveries and predict delivery delays based on historical lead times.',
-      temperature: 0.2,
-      version: 'v1.7.5',
-    },
-    {
-      id: 'agent_9',
-      name: 'Staff KPI & Performance AI',
-      category: 'HR & Staff',
-      role: 'Cashier Scanning Velocity, Error Rate & Task Allocation Planner',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 165,
-      callsToday: 310,
-      accuracy: '98.1%',
-      tokensToday: 51200,
-      costToday: 'Rp 810',
-      failureRate: '0.05%',
-      allowedTools: ['cashierThroughputMetrics', 'shiftBalancingOptimizer', 'attendanceVerification'],
-      dataAccess: ['staff', 'shift_sessions', 'cashier_audit_log'],
-      systemPrompt: 'Evaluate cashier transactions per minute, barcode scanning accuracy, and recommend optimal staffing during rush hours.',
-      temperature: 0.2,
-      version: 'v2.0.0',
-    },
-    {
-      id: 'agent_10',
-      name: 'Voice & Barcode Scanner AI',
-      category: 'POS & Hardware',
-      role: 'Audio POS Voice-to-Order & Degraded Barcode Image Recognition',
-      model: 'gemini-3.8-flash',
-      provider: 'Google GenAI Cloud',
-      status: 'active',
-      latencyMs: 155,
-      callsToday: 640,
-      accuracy: '99.2%',
-      tokensToday: 89600,
-      costToday: 'Rp 1.430',
-      failureRate: '0.03%',
-      allowedTools: ['voiceAudioToCartonMapper', 'damagedBarcodeEnhancer', 'quickSkuLookup'],
-      dataAccess: ['product_barcodes', 'audio_stream_buffer'],
-      systemPrompt: 'Process cashier microphone audio input (e.g. "dua dus indomi") and reconstruct partially obscured or folded 1D/2D barcode scans.',
-      temperature: 0.1,
-      version: 'v3.4.2',
-    },
-  ]);
+    [todayLogs]
+  );
 
   // Expand / Collapse state for Agent cards
   const [expandedAgentIds, setExpandedAgentIds] = useState<Record<string, boolean>>({
@@ -341,55 +311,59 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
     setExpandedAgentIds({});
   };
 
-  const handleToggleAgentStatus = (id: string) => {
-    setAgents((prev) =>
-      prev.map((a) =>
-        a.id === id ? { ...a, status: a.status === 'active' ? 'standby' : 'active' } : a
-      )
-    );
+  const handleToggleAgentStatus = async (id: string) => {
+    const current = agents.find((a) => a.id === id);
+    if (!current) return;
+    const newStatus = current.status === 'active' ? 'standby' : 'active';
+    try {
+      await updateDoc(doc(db, 'ai_agents', id), { status: newStatus });
+    } catch (err) {
+      console.error('Failed to toggle agent status:', err);
+    }
   };
 
-  const handleRunAgentSandboxTest = (agent: any) => {
+  const handleRunAgentSandboxTest = async (agent: any) => {
     const query = agentTestInputs[agent.id] || 'Lakukan audit otomatis pada pesanan POS terakhir';
     setAgentIsTesting((prev) => ({ ...prev, [agent.id]: true }));
 
-    setTimeout(() => {
-      let outputText = '';
-      if (agent.id === 'agent_1') {
-        outputText = `[Anti-Fraud Sentinel] Latency: 142ms\nSTATUS: VERIFIED SECURE\n- Geofence Distance: 42.1m (Radius Batas: 500m)\n- Mock GPS Detector: False (Hardware GPS Source)\n- Risk Score: 0.02 (Sangat Aman)\n- Rekomendasi: Transaksi dipersilakan diproses.`;
-      } else if (agent.id === 'agent_2') {
-        outputText = `[Order Parser] Input: "${query}"\n- Terdeteksi: Indomie Mi Goreng Special (Dus: 2x, 80 pcs)\n- Package Type: Carton Wholesale\n- Total Estimasi: Rp 260.000\n- Confidence: 99.4%`;
-      } else if (agent.id === 'agent_3') {
-        outputText = `[Restock Advisor] SKU: Aqua 600ml Botol Dus\n- Sisa Fisik: 3 Karton\n- Proyeksi Habis: 1.5 Hari\n- Rekomendasi PO: 25 Karton ke Distributor Utama (Estimasi modal: Rp 1.800.000). Draft PO dibuat.`;
-      } else if (agent.id === 'agent_5') {
-        outputText = `[Pricing Optimizer] Margin Analysis\n- Harga Beli Grosir: Rp 118.000/dus\n- Rekomendasi Jual Dus: Rp 130.000 (Margin 9.2%)\n- Rekomendasi Jual Eceran: Rp 3.500/pcs (Margin 18.6%)\n- Validasi Margin: Aman & Kompetitif.`;
-      } else {
-        outputText = `[${agent.name}] Inferensi Selesai (${agent.latencyMs}ms)\nModel: ${agent.model} | Tools Digunakan: ${agent.allowedTools.slice(0, 2).join(', ')}\nQuery: "${query}"\nHasil: Pemrosesan agen tuntas dengan kepatuhan isolasi data multi-outlet RiskCart.`;
-      }
-
+    try {
+      const res = await fetch('/api/ai/agent-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentKey: agent.id,
+          agentName: agent.name,
+          systemPrompt: agent.systemPrompt,
+          query,
+          model: agent.model,
+        }),
+      });
+      const data = await res.json();
+      const outputText = data.text || `[${agent.name}] Inferensi selesai (${data.latencyMs || 0}ms)`;
       setAgentTestOutputs((prev) => ({ ...prev, [agent.id]: outputText }));
+    } catch (err: any) {
+      setAgentTestOutputs((prev) => ({
+        ...prev,
+        [agent.id]: `[Error] Gagal menjalankan inferensi: ${err?.message || 'Koneksi error'}`,
+      }));
+    } finally {
       setAgentIsTesting((prev) => ({ ...prev, [agent.id]: false }));
-    }, 450);
+    }
   };
 
-  const handleCreateNewAgent = (e: React.FormEvent) => {
+  const handleCreateNewAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAgentForm.name.trim()) return;
 
-    const newAgent = {
-      id: `agent_${Date.now()}`,
+    const newId = `agent_${Date.now()}`;
+    const newAgent: AIAgent = {
+      id: newId,
       name: newAgentForm.name,
       category: newAgentForm.category,
       role: newAgentForm.role || 'Operasional Khusus Toko',
       model: newAgentForm.model,
       provider: 'Google GenAI Cloud',
       status: 'active',
-      latencyMs: 165,
-      callsToday: 0,
-      accuracy: '99.0%',
-      tokensToday: 0,
-      costToday: 'Rp 0',
-      failureRate: '0.00%',
       allowedTools: newAgentForm.allowedTools.split(',').map((t) => t.trim()).filter(Boolean),
       dataAccess: ['tenant_documents'],
       systemPrompt: newAgentForm.systemPrompt || 'Agen otonom terintegrasi RiskCart.',
@@ -397,17 +371,21 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       version: 'v1.0.0',
     };
 
-    setAgents((prev) => [newAgent, ...prev]);
-    setExpandedAgentIds((prev) => ({ ...prev, [newAgent.id]: true }));
-    setIsAddModalOpen(false);
-    setNewAgentForm({
-      name: '',
-      category: 'Security & Fraud',
-      role: '',
-      model: 'gemini-3.8-flash',
-      systemPrompt: '',
-      allowedTools: 'calculateDistance, anomalyDetector',
-    });
+    try {
+      await setDoc(doc(db, 'ai_agents', newId), newAgent);
+      setExpandedAgentIds((prev) => ({ ...prev, [newId]: true }));
+      setIsAddModalOpen(false);
+      setNewAgentForm({
+        name: '',
+        category: 'Security & Fraud',
+        role: '',
+        model: 'gemini-3.8-flash',
+        systemPrompt: '',
+        allowedTools: 'calculateDistance, anomalyDetector',
+      });
+    } catch (err) {
+      console.error('Failed to create agent in Firestore:', err);
+    }
   };
 
   const filteredAgents = agents.filter((a) => {
@@ -1061,12 +1039,470 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocCategory, setNewDocCategory] = useState('Operasional Kasir');
 
+  // URL query parameter (?agent=<slug>) listener and activeView resolution
+  const [urlAgent, setUrlAgent] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('agent');
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      setUrlAgent(searchParams.get('agent'));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Determine active view prioritizing subModule, then URL param, defaulting to 'ai_master'
+  const activeView = useMemo(() => {
+    const legacyMap: Record<string, string> = {
+      ai_fraud_transaction: 'anti-fraud-sentinel',
+      ai_advisor_purchase: 'ai-advisor-purchase',
+      ai_advisor_order: 'order-intent-parser',
+      ai_chat_pwa: 'order-intent-parser',
+      ai_advisor_strategy: 'strategic-restock-advisor',
+      tanya_ai: 'business-copilot',
+      ai_preventif: 'loss-prevention',
+    };
+
+    if (subModule && subModule !== 'ai_master') {
+      return legacyMap[subModule] || subModule;
+    }
+    if (urlAgent) {
+      return legacyMap[urlAgent] || urlAgent;
+    }
+    return subModule || 'ai_master';
+  }, [subModule, urlAgent]);
+
+  const handleSelectAgentSlug = useCallback((slug: string) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('agent', slug);
+      window.history.pushState({ agent: slug }, '', url.toString());
+      setUrlAgent(slug);
+    } catch (e) {
+      window.history.pushState({ agent: slug }, '', `?agent=${slug}`);
+      setUrlAgent(slug);
+    }
+  }, []);
+
+  // 11 Enterprise AI Agents Directory
+  const AI_AGENTS_CATALOG = [
+    {
+      slug: 'anti-fraud-sentinel',
+      name: 'Anti-Fraud Sentinel AI',
+      role: 'Spatial Geofence, Mock Location Radar & Anomaly Risk Scorer',
+      latency: '142ms',
+      status: 'active',
+      icon: ShieldAlert,
+    },
+    {
+      slug: 'ai-advisor-purchase',
+      name: 'AI Advisor Purchase (7-Day Lead)',
+      role: 'Stock Runway Calculator & Mandatory 7-Day Reorder Lock',
+      latency: '190ms',
+      status: 'active',
+      icon: ShoppingBag,
+    },
+    {
+      slug: 'order-intent-parser',
+      name: 'Order Intent & Typo Parser',
+      role: 'Typo-Tolerant Conversational Ordering & Availability Validator',
+      latency: '185ms',
+      status: 'active',
+      icon: MessageSquare,
+    },
+    {
+      slug: 'strategic-restock-advisor',
+      name: 'Strategic Restock Advisor',
+      role: 'Business Intelligence, Fact vs Prediction & Carton Margin Yield',
+      latency: '210ms',
+      status: 'active',
+      icon: TrendingUp,
+    },
+    {
+      slug: 'business-copilot',
+      name: 'Tanya AI Business Copilot',
+      role: 'Store Analytics Copilot & Autonomous Cashier Q&A Assistant',
+      latency: '160ms',
+      status: 'active',
+      icon: Sparkles,
+    },
+    {
+      slug: 'dynamic-pricing',
+      name: 'Dynamic Pricing Optimizer',
+      role: 'Algorithmic Markdown, Margin Floor Protection & Elasticity Rules',
+      latency: '195ms',
+      status: 'active',
+      icon: Tag,
+    },
+    {
+      slug: 'customer-retention',
+      name: 'Customer Retention & Churn AI',
+      role: 'RFM Customer Segmentation & Automated Winback Engagement',
+      latency: '175ms',
+      status: 'active',
+      icon: UserCheck,
+    },
+    {
+      slug: 'loss-prevention',
+      name: 'Loss Prevention & Cash Anomaly AI',
+      role: 'Register Discrepancy Audits, Kasbon Debt & Inventory Shrink Radar',
+      latency: '130ms',
+      status: 'active',
+      icon: AlertOctagon,
+    },
+    {
+      slug: 'supplier-anomaly',
+      name: 'Supplier Price Anomaly AI',
+      role: 'Invoice Inflation Watchdog, PO Discrepancy & Dispute Memo Generator',
+      latency: '220ms',
+      status: 'active',
+      icon: Truck,
+    },
+    {
+      slug: 'staff-kpi',
+      name: 'Staff KPI & Performance AI',
+      role: 'Cashier Tender Velocity, Void Spikes & Frontline Coaching',
+      latency: '165ms',
+      status: 'active',
+      icon: BarChart3,
+    },
+    {
+      slug: 'scanner-ai',
+      name: 'Voice & Barcode Scanner AI',
+      role: 'Multimodal Vision Barcode Reader & Voice-to-Stock Audio Intake',
+      latency: '155ms',
+      status: 'active',
+      icon: Terminal,
+    },
+  ];
+
+  // State: Dynamic Pricing Optimizer
+  const [dynamicPricingItems, setDynamicPricingItems] = useState([
+    {
+      id: 'dp_1',
+      name: 'Aqua Botol 600ml (Dus 24x)',
+      sku: 'AQ-600-DUS',
+      currentPrice: 48000,
+      suggestedPrice: 51500,
+      costPrice: 42000,
+      currentMargin: 12.5,
+      suggestedMargin: 18.4,
+      elasticity: 'Inelastic (0.42)',
+      demandTrend: '+18% Peak Run',
+      applied: false,
+    },
+    {
+      id: 'dp_2',
+      name: 'Indomie Goreng Spesial (Dus 40x)',
+      sku: 'IND-GOR-40',
+      currentPrice: 112000,
+      suggestedPrice: 116500,
+      costPrice: 96000,
+      currentMargin: 14.2,
+      suggestedMargin: 17.6,
+      elasticity: 'Moderate (0.76)',
+      demandTrend: '+8% Wholesale',
+      applied: true,
+    },
+    {
+      id: 'dp_3',
+      name: 'Minyak Goreng Sania 2L (Dus 6x)',
+      sku: 'SN-2L-DUS',
+      currentPrice: 198000,
+      suggestedPrice: 204000,
+      costPrice: 185000,
+      currentMargin: 6.5,
+      suggestedMargin: 9.3,
+      elasticity: 'High Elasticity (1.35)',
+      demandTrend: 'Erosion Risk',
+      applied: false,
+    },
+    {
+      id: 'dp_4',
+      name: 'Kopi Kapal Api Mix (Renceng 10x)',
+      sku: 'KPL-MIX-RCG',
+      currentPrice: 14000,
+      suggestedPrice: 15500,
+      costPrice: 11800,
+      currentMargin: 15.7,
+      suggestedMargin: 23.8,
+      elasticity: 'Low Sensitivity (0.35)',
+      demandTrend: 'High Fast Cash',
+      applied: false,
+    },
+  ]);
+
+  // State: Customer Retention & Churn AI
+  const [retentionClients, setRetentionClients] = useState([
+    {
+      id: 'ret_1',
+      name: 'Toko Berkah Sejahtera (Bpk. Joko)',
+      type: 'VIP Wholesale',
+      lastOrderDays: 14,
+      totalSpend: 18500000,
+      churnScore: 84,
+      riskLevel: 'Critical Churn Risk',
+      preferredCarton: 'Aqua Dus, Mie Dus 40x',
+      recommendedAction: 'Send 5% Carton Re-order Discount via WhatsApp',
+      contactStatus: 'Pending Action',
+    },
+    {
+      id: 'ret_2',
+      name: 'Warung Bu Siti Katering',
+      type: 'Regular B2B',
+      lastOrderDays: 11,
+      totalSpend: 7800000,
+      churnScore: 71,
+      riskLevel: 'Moderate Churn Risk',
+      preferredCarton: 'Minyak 2L Dus, Beras 25kg',
+      recommendedAction: 'Automated Friendly Reminder & Stock Availability Alert',
+      contactStatus: 'Pending Action',
+    },
+    {
+      id: 'ret_3',
+      name: 'Resto Sunda Mang Dimas',
+      type: 'VIP Wholesale',
+      lastOrderDays: 9,
+      totalSpend: 14200000,
+      churnScore: 58,
+      riskLevel: 'Low Risk',
+      preferredCarton: 'Kecap Manis Jerigen, Gas 3kg',
+      recommendedAction: 'Scheduled Weekly Order Check-in',
+      contactStatus: 'Re-engaged',
+    },
+    {
+      id: 'ret_4',
+      name: 'Kantin Sekolah Harapan',
+      type: 'Wholesale Snack',
+      lastOrderDays: 19,
+      totalSpend: 5400000,
+      churnScore: 92,
+      riskLevel: 'High Inactivity',
+      preferredCarton: 'Teh Pucuk Dus, Biskuit Kaleng',
+      recommendedAction: 'Direct Call from Store Manager + Free Delivery Coupon',
+      contactStatus: 'Pending Action',
+    },
+  ]);
+
+  // State: Supplier Price Anomaly AI
+  const [supplierAnomalies, setSupplierAnomalies] = useState([
+    {
+      id: 'spa_1',
+      supplierName: 'PT Danone Distribution Utama',
+      item: 'Aqua Dus 240ml Gelas (48 Cup)',
+      expectedCost: 26500,
+      invoicedCost: 29800,
+      spikePercent: '+12.4%',
+      varianceTotal: 1650000,
+      status: 'Spike Flagged',
+      severity: 'Critical',
+      invoiceNo: 'INV-DN-88421',
+    },
+    {
+      id: 'spa_2',
+      supplierName: 'CV Sinar Jaya Abadi',
+      item: 'Minyak Goreng Refill 2L Dus (6 Pouch)',
+      expectedCost: 182000,
+      invoicedCost: 196000,
+      spikePercent: '+7.7%',
+      varianceTotal: 840000,
+      status: 'Under Review',
+      severity: 'Warning',
+      invoiceNo: 'INV-SJA-0912',
+    },
+    {
+      id: 'spa_3',
+      supplierName: 'PT Indomarco Adi Prima',
+      item: 'Indomie Kuah Ayam Bawang (Dus 40x)',
+      expectedCost: 96500,
+      invoicedCost: 101000,
+      spikePercent: '+4.6%',
+      varianceTotal: 450000,
+      status: 'Spike Flagged',
+      severity: 'Warning',
+      invoiceNo: 'INV-IDM-4410',
+    },
+  ]);
+
+  // State: Staff KPI & Performance AI
+  const [staffKpiList, setStaffKpiList] = useState([
+    {
+      id: 'kpi_1',
+      name: 'Siti Rahma (Cashier Station #1)',
+      shift: 'Morning (07:00 - 15:00)',
+      tenderSpeedSec: 21.4,
+      totalTx: 142,
+      voidRate: '0.14%',
+      cartonUpsellRate: '34.2%',
+      cashAccuracy: '99.98%',
+      rating: 'Outstanding (A+)',
+      coachingTip: 'Benchmark speed; eligible for monthly frontline champion bonus.',
+    },
+    {
+      id: 'kpi_2',
+      name: 'Dimas Kurniawan (Cashier Station #2)',
+      shift: 'Evening (15:00 - 23:00)',
+      tenderSpeedSec: 26.8,
+      totalTx: 118,
+      voidRate: '0.68%',
+      cartonUpsellRate: '27.5%',
+      cashAccuracy: '99.91%',
+      rating: 'Proficient (B+)',
+      coachingTip: 'Speed is consistent. Coach on carton wholesale conversion prompts during queue peaks.',
+    },
+    {
+      id: 'kpi_3',
+      name: 'Andi Pratama (PWA & Drive-thru Pick)',
+      shift: 'Full Shift (09:00 - 18:00)',
+      tenderSpeedSec: 29.1,
+      totalTx: 94,
+      voidRate: '1.24%',
+      cartonUpsellRate: '18.2%',
+      cashAccuracy: '99.70%',
+      rating: 'Coaching Required (C)',
+      coachingTip: 'Void count spike noted on split bills. Recommend refresher on POS split tender workflow.',
+    },
+  ]);
+
+  // State: Voice & Barcode Scanner AI
+  const [scannerLogs, setScannerLogs] = useState([
+    {
+      id: 'sc_1',
+      timestamp: '14:22:10',
+      type: 'Barcode (Camera EAN-13)',
+      rawInput: '8992761011112',
+      detectedProduct: 'Aqua Botol 600ml (Dus 24x)',
+      cartonQty: 5,
+      confidence: '99.8%',
+      status: 'Stock Verified & Added',
+    },
+    {
+      id: 'sc_2',
+      timestamp: '14:20:45',
+      type: 'Voice Command (Audio Mic)',
+      rawInput: '"Tambah lima karton aqua gelas"',
+      detectedProduct: 'Aqua Dus 240ml Gelas (48 Cup)',
+      cartonQty: 5,
+      confidence: '98.4%',
+      status: 'Stock Verified & Added',
+    },
+    {
+      id: 'sc_3',
+      timestamp: '14:18:12',
+      type: 'Barcode (QR Pallet Tag)',
+      rawInput: 'PLT-IDM-GOR-40X',
+      detectedProduct: 'Indomie Goreng Spesial (Dus 40x)',
+      cartonQty: 20,
+      confidence: '100%',
+      status: 'Stock Verified & Added',
+    },
+  ]);
+  const [testVoiceText, setTestVoiceText] = useState('tambah tiga karton le minerale 600ml');
+  const [testBarcodeText, setTestBarcodeText] = useState('8999999123456');
+
   return (
     <div className="space-y-6">
       {/* ========================================================= */}
+      {/* PERSISTENT AI AGENTS QUICK NAV & ACTIVE STATUS BAR        */}
+      {/* ========================================================= */}
+      <div className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
+              Autonomous AI Agent Ecosystem (11 Enterprise Agents)
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+            <span className="flex items-center gap-1.5 font-mono text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              All Systems Operational
+            </span>
+            <span className="text-zinc-600">|</span>
+            <span>
+              URL Parameter:{' '}
+              <code className="text-emerald-400 bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-800 font-mono text-[10px]">
+                ?agent={activeView}
+              </code>
+            </span>
+          </div>
+        </div>
+
+        {/* Scrollable Agent Indicator Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
+          {AI_AGENTS_CATALOG.map((agent) => {
+            const isSelected = activeView === agent.slug;
+            const Icon = agent.icon;
+            return (
+              <button
+                key={agent.slug}
+                onClick={() => handleSelectAgentSlug(agent.slug)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center gap-2 shrink-0 ${
+                  isSelected
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm ring-1 ring-emerald-500/30'
+                    : 'bg-zinc-950/60 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 border border-zinc-800/80'
+                }`}
+                title={`${agent.name} - ${agent.role}`}
+              >
+                {isSelected ? (
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                ) : (
+                  <Icon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                )}
+                <span>{agent.name}</span>
+                <span
+                  className={`text-[9px] font-mono px-1 rounded ${
+                    isSelected
+                      ? 'bg-emerald-950/60 text-emerald-400 font-bold'
+                      : 'bg-zinc-900 text-zinc-500'
+                  }`}
+                >
+                  {agent.latency}
+                </span>
+              </button>
+            );
+          })}
+
+          <div className="h-4 w-px bg-zinc-800 shrink-0 mx-1" />
+
+          <button
+            onClick={() => handleSelectAgentSlug('ai_master')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+              activeView === 'ai_master'
+                ? 'bg-blue-600/25 text-blue-300 border border-blue-500/40 shadow-sm'
+                : 'bg-zinc-950/60 text-zinc-400 hover:text-zinc-200 border border-zinc-800/80'
+            }`}
+          >
+            <Brain className="w-3.5 h-3.5 text-blue-400" />
+            <span>Master Governance</span>
+          </button>
+
+          <button
+            onClick={() => handleSelectAgentSlug('ai_knowledge')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+              activeView === 'ai_knowledge'
+                ? 'bg-purple-600/25 text-purple-300 border border-purple-500/40 shadow-sm'
+                : 'bg-zinc-950/60 text-zinc-400 hover:text-zinc-200 border border-zinc-800/80'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5 text-purple-400" />
+            <span>Knowledge Base</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ========================================================= */}
       {/* 5.1 MASTER AI (AGENT REGISTRY & GOVERNANCE)               */}
       {/* ========================================================= */}
-      {subModule === 'ai_master' && (
+      {activeView === 'ai_master' && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1078,7 +1514,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 <div>
                   <h1 className="text-xl font-bold text-white">Master AI — Agent Registry &amp; Governance</h1>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    Pusat administrasi, pengawasan model, kontrol hak akses tools, token, dan isolasi tenant AI Agent RiskCart.
+                    Enterprise AI agent administration, model telemetry, tool permissions, token budgets, and tenant isolation.
                   </p>
                 </div>
               </div>
@@ -1095,7 +1531,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-blue-600/20"
               >
                 <Plus className="w-4 h-4" />
-                <span>Tambah Agen AI</span>
+                <span>Add AI Agent</span>
               </button>
             </div>
           </div>
@@ -1112,14 +1548,16 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
 
             <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800">
               <div className="text-[11px] text-zinc-400 font-medium">Average Latency</div>
-              <div className="text-xl font-black text-white font-mono mt-1">168 ms</div>
+              <div className="text-xl font-black text-white font-mono mt-1">{metricsToday.avgLatencyMs} ms</div>
               <div className="text-[10px] text-zinc-500 mt-1">High-throughput token response</div>
             </div>
 
             <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800">
               <div className="text-[11px] text-zinc-400 font-medium">Total AI Invocations Today</div>
-              <div className="text-xl font-black text-amber-400 font-mono mt-1">4,982 Calls</div>
-              <div className="text-[10px] text-zinc-500 mt-1">Total Token: 673.7k | Biaya: Rp 10.780</div>
+              <div className="text-xl font-black text-amber-400 font-mono mt-1">{metricsToday.totalCalls.toLocaleString('id-ID')} Calls</div>
+              <div className="text-[10px] text-zinc-500 mt-1">
+                Total Token: {metricsToday.totalTokens > 0 ? `${(metricsToday.totalTokens / 1000).toFixed(1)}k` : '0'} | Biaya: Rp {metricsToday.totalCostIdr.toLocaleString('id-ID')}
+              </div>
             </div>
 
             <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800">
@@ -1216,6 +1654,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
           <div className="space-y-3">
             {filteredAgents.map((agent) => {
               const isExpanded = !!expandedAgentIds[agent.id];
+              const agentMetrics = getAgentMetricsToday(agent.id);
 
               return (
                 <div
@@ -1268,19 +1707,19 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                     <div className="flex items-center gap-5 text-xs border-t lg:border-t-0 lg:border-l border-zinc-800/80 pt-3 lg:pt-0 lg:pl-6">
                       <div>
                         <div className="text-[10px] text-zinc-500">Latency</div>
-                        <div className="font-mono font-bold text-white">{agent.latencyMs}ms</div>
+                        <div className="font-mono font-bold text-white">{agentMetrics.latencyMs}ms</div>
                       </div>
                       <div>
                         <div className="text-[10px] text-zinc-500">Calls Today</div>
-                        <div className="font-mono font-bold text-amber-400">{agent.callsToday}</div>
+                        <div className="font-mono font-bold text-amber-400">{agentMetrics.callsToday}</div>
                       </div>
                       <div>
                         <div className="text-[10px] text-zinc-500">Token Cost</div>
-                        <div className="font-mono font-bold text-emerald-400">{agent.costToday}</div>
+                        <div className="font-mono font-bold text-emerald-400">{agentMetrics.costToday}</div>
                       </div>
                       <div>
                         <div className="text-[10px] text-zinc-500">Failure Rate</div>
-                        <div className="font-mono font-bold text-zinc-400">{agent.failureRate}</div>
+                        <div className="font-mono font-bold text-zinc-400">{agentMetrics.failureRate}</div>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -1332,7 +1771,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1">
                               <span className="text-[10px] text-zinc-500 font-bold uppercase">Token Consumed</span>
                               <div className="text-zinc-200 font-mono text-[11px]">
-                                {(agent.tokensToday / 1000).toFixed(1)}k tokens
+                                {agentMetrics.tokensToday > 0 ? `${(agentMetrics.tokensToday / 1000).toFixed(1)}k tokens` : '0 tokens'}
                               </div>
                             </div>
                             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1">
@@ -1499,7 +1938,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       {/* ========================================================= */}
       {/* 5.1B AI ADVISOR PURCHASE (7-DAY STOCK LOCK RESTOCK ADVISOR)*/}
       {/* ========================================================= */}
-      {subModule === 'ai_advisor_purchase' && (
+      {(activeView === 'ai-advisor-purchase' || activeView === 'ai_advisor_purchase') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1513,7 +1952,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                     AI Advisor Purchase — Stock Runway &amp; 7-Day Reorder Lock
                   </h1>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    Rekomendasi pengadaan produk berbasis stok tersedia &amp; penjualan harian. <strong className="text-amber-300">Lock Rule: Jika stok kurang untuk 1 minggu (&lt; 7 hari), maka wajib untuk restock.</strong>
+                    Automated replenishment advisory based on available physical carton stock and run-rate. <strong className="text-amber-300">Lock Rule: Products with less than 7 days of stock remaining (&lt; 7 days) must be restocked immediately.</strong>
                   </p>
                 </div>
               </div>
@@ -1525,7 +1964,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer transition shadow-lg shadow-amber-600/20"
               >
                 <ShoppingBag className="w-4 h-4" />
-                <span>Buat PO Otomatis ({mandatoryCount} Item Kritis)</span>
+                <span>Create Automated PO ({mandatoryCount} Critical Items)</span>
               </button>
             </div>
           </div>
@@ -1915,19 +2354,19 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 5.2 AI ADVISOR ORDER                                      */}
+      {/* 5.2 ORDER INTENT & TYPO PARSER                            */}
       {/* ========================================================= */}
-      {subModule === 'ai_advisor_order' && (
+      {(activeView === 'order-intent-parser' || activeView === 'ai_advisor_order') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-400" />
-                AI Advisor Order — Queue, Availability &amp; Substitution
+                <MessageSquare className="w-5 h-5 text-indigo-400" />
+                Order Intent &amp; Typo Parser — Queue, Availability &amp; Substitution
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Validasi antrean pesanan PWA &amp; POS, verifikasi ketersediaan stok dus, dan rekomendasi substitusi produk cerdas.
+                Validation of incoming PWA &amp; WhatsApp order queues, verification of carton inventory availability, and AI-driven high-margin product substitution recommendations.
               </p>
             </div>
           </div>
@@ -2143,23 +2582,23 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 5.3 AI ADVISOR STRATEGY                                   */}
+      {/* 5.3 STRATEGIC RESTOCK ADVISOR                             */}
       {/* ========================================================= */}
-      {subModule === 'ai_advisor_strategy' && (
+      {(activeView === 'strategic-restock-advisor' || activeView === 'ai_advisor_strategy') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-purple-400" />
-                AI Advisor Strategy — Business Intelligence &amp; Recommendations
+                Strategic Restock Advisor — Business Intelligence &amp; Recommendations
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Dukungan keputusan bisnis berbasis data transaksi nyata, analisis margin laba per karton, dan retensi pelanggan.
+                Executive business decision support grounded in verified transaction history, carton gross margin yield, and customer retention.
               </p>
             </div>
             <div className="text-right">
-              <span className="text-[10px] text-zinc-400 block">Metode Grounding</span>
+              <span className="text-[10px] text-zinc-400 block">Grounding Protocol</span>
               <span className="text-xs font-bold text-emerald-400">Strict Fact vs Prediction Separation</span>
             </div>
           </div>
@@ -2329,7 +2768,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       {/* ========================================================= */}
       {/* 5.4 AI CHAT CLIENT PWA SIMULATOR                          */}
       {/* ========================================================= */}
-      {subModule === 'ai_chat_pwa' && (
+      {(activeView === 'ai_chat_pwa' || activeView === 'order-intent-parser') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2339,7 +2778,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 AI Chat Client PWA — Conversational Ordering &amp; Typo Tolerance
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Pengujian parser pesanan bahasa santai, toleransi salah ketik (typo), konversi dus/satuan, dan pelacakan pesanan PWA.
+                Natural conversational order parser, typo tolerance matching, carton/unit conversion, and PWA client simulation.
               </p>
             </div>
           </div>
@@ -2505,47 +2944,47 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 5.5 AI PREVENTIF (OPERATIONAL DEFENSE SYSTEM)             */}
+      {/* 5.5 LOSS PREVENTION & CASH ANOMALY AI                     */}
       {/* ========================================================= */}
-      {subModule === 'ai_preventif' && (
+      {(activeView === 'loss-prevention' || activeView === 'ai_preventif') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-emerald-400" />
-                AI Preventif — Operational Defense &amp; Anomaly Detection
+                Loss Prevention &amp; Cash Anomaly AI — Operational Defense System
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Peringatan dini stok habis, anomali perubahan inventaris fisik, erosi margin laba, kasbon tempo, dan tagihan supplier.
+                Early detection for physical carton inventory shrink, cashier cash drawer discrepancies, margin leakage, and overdue customer debt.
               </p>
             </div>
             <span className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30 flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4" />
-              <span>Sistem Pengawasan Aktif</span>
+              <span>Active Watchdog System</span>
             </span>
           </div>
 
           {/* Kolom Instruksi & Knowledge AI Preventif */}
           <AIInstructionKnowledgePanel
             agentKey="ai_preventif"
-            agentTitle="AI Preventif"
+            agentTitle="Loss Prevention & Cash Anomaly AI"
             agentRole="Store Loss Prevention, Margin Leakage & Physical Inventory Anomaly Watchdog"
             defaultInstruction="Monitor physical stock discrepancies, sudden margin drops below 15%, overdue kasbon customer debts (>14 days), and cash drawer register variances. Send automated priority escalations to the store manager."
             defaultKnowledgeList={[
               {
                 id: 'kn_prev1',
-                title: 'Batas Toleransi Selisih Kasir & Kas Kecil',
-                category: 'Kebijakan Kasir & Kasbon',
-                content: 'Selisih kas di laci kasir > Rp 10.000 memicu audit shift otomatis. Transaksi kas keluar harus disertai bukti struk.',
-                lastUpdated: '10 Okt 2026',
+                title: 'Cash Drawer Variance Tolerance Policy',
+                category: 'Cashier & Credit Policies',
+                content: 'Cash drawer discrepancies exceeding Rp 10,000 trigger an automated shift audit. All cash withdrawals must have matching receipt vouchers.',
+                lastUpdated: '10 Oct 2026',
               },
               {
                 id: 'kn_prev2',
-                title: 'Kebijakan Penguncian Piutang Kasbon Tempo',
-                category: 'Kebijakan Kasir & Kasbon',
-                content: 'Pelanggan dengan kasbon tertunggak > 14 hari otomatis dibekukan dari metode pembayaran Kasbon / Debt di POS dan PWA.',
-                lastUpdated: '09 Okt 2026',
+                title: 'Overdue Customer Credit Lockout Policy',
+                category: 'Cashier & Credit Policies',
+                content: 'Customers with overdue credit > 14 days are automatically blocked from debt payments at POS and PWA checkout.',
+                lastUpdated: '09 Oct 2026',
               },
             ]}
             accentColor="emerald"
@@ -2553,20 +2992,27 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
 
           {/* Severity Filter Pills */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-zinc-500 font-semibold mr-1">Filter Tingkat Keparahan:</span>
-            {(['Semua', 'Kritis', 'Peringatan'] as const).map((sev) => (
-              <button
-                key={sev}
-                onClick={() => setPreventiveAlertFilter(sev)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
-                  preventiveAlertFilter === sev
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
-                }`}
-              >
-                {sev}
-              </button>
-            ))}
+            <span className="text-xs text-zinc-500 font-semibold mr-1">Severity Filter:</span>
+            {(['Semua', 'Kritis', 'Peringatan'] as const).map((sev) => {
+              const labelMap: Record<string, string> = {
+                Semua: 'All Severities',
+                Kritis: 'Critical',
+                Peringatan: 'Warning',
+              };
+              return (
+                <button
+                  key={sev}
+                  onClick={() => setPreventiveAlertFilter(sev)}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    preventiveAlertFilter === sev
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
+                  }`}
+                >
+                  {labelMap[sev] || sev}
+                </button>
+              );
+            })}
           </div>
 
           {/* Alerts Feed */}
@@ -2646,19 +3092,19 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 5.6 AI FRAUD TRANSACTION (SENTINEL ANOMALY RADAR)         */}
+      {/* 5.6 ANTI-FRAUD SENTINEL AI (ANOMALY RADAR)                */}
       {/* ========================================================= */}
-      {subModule === 'ai_fraud_transaction' && (
+      {(activeView === 'anti-fraud-sentinel' || activeView === 'ai_fraud_transaction') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-rose-500" />
-                AI Fraud Transaction — Live Anomaly Score &amp; Explainability
+                Anti-Fraud Sentinel AI — Live Anomaly Score &amp; Explainability
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Investigasi transaksi mencurigakan dengan skor risiko 0-100, pemindaian mock GPS, dan bukti anomali kasir.
+                Real-time investigation of high-risk transactions with 0-100 risk score, mock GPS location scanning, and cashier anomaly telemetry.
               </p>
             </div>
             {onNavigateTab && (
@@ -2666,31 +3112,31 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 onClick={() => onNavigateTab('anti_fraud')}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition cursor-pointer"
               >
-                Buka Sentinel Inspector Penuh
+                Launch Full Sentinel Inspector
               </button>
             )}
           </div>
 
           {/* Kolom Instruksi & Knowledge AI Fraud Transaction */}
           <AIInstructionKnowledgePanel
-            agentKey="ai_fraud_transaction"
-            agentTitle="AI Fraud Transaction Sentinel"
+            agentKey="anti-fraud-sentinel"
+            agentTitle="Anti-Fraud Sentinel AI"
             agentRole="Spatial Geofence, Mock Location, Rapid Checkout Velocity & Payment Anomaly Radar"
             defaultInstruction="Inspect all POS and PWA transactions in real-time. Calculate Haversine distance from merchant coordinates (flag if > 500m geofence). Detect simulated GPS / Mock Provider emulator signatures. Flag rapid split-bill spikes and cash drawer open-without-receipt anomalies."
             defaultKnowledgeList={[
               {
                 id: 'kn_fr1',
-                title: 'Batas Geofence Radius Transaksi PWA Toko',
-                category: 'Pencegahan Fraud & Geofence',
-                content: 'Radius batas toleransi pemesanan PWA adalah 500 meter dari koordinat toko resmi. Pesanan di luar batas diwajibkan verifikasi manual atau uang muka.',
-                lastUpdated: '10 Okt 2026',
+                title: 'Store PWA Geofence Radius Boundary',
+                category: 'Fraud Prevention & Geofence',
+                content: 'The default transaction geofence tolerance is 500 meters from official outlet coordinates. Orders beyond this threshold require manual supervisor verification.',
+                lastUpdated: '10 Oct 2026',
               },
               {
                 id: 'kn_fr2',
-                title: 'Kriteria Indikasi Mock GPS & Fake Location',
-                category: 'Pencegahan Fraud & Geofence',
-                content: 'Ketepatan koordinat (accuracy) < 1.0 meter konstan atau provider berlabel network-spoofed dianggap indikasi kuat Fake GPS.',
-                lastUpdated: '08 Okt 2026',
+                title: 'Mock GPS & Spoofed Geolocation Criteria',
+                category: 'Fraud Prevention & Geofence',
+                content: 'Coordinate accuracy constant < 1.0m or network emulator provider signatures are flagged as high-probability spoofed locations.',
+                lastUpdated: '08 Oct 2026',
               },
             ]}
             accentColor="rose"
@@ -2804,7 +3250,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       {/* ========================================================= */}
       {/* KNOWLEDGE ALL AI AGENT                                    */}
       {/* ========================================================= */}
-      {subModule === 'ai_knowledge' && (
+      {activeView === 'ai_knowledge' && (
         <div className="space-y-6 animate-in fade-in">
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
@@ -2813,7 +3259,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 Knowledge Base All AI Agent — Embedding &amp; Grounding
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Basis pengetahuan operasional toko yang dijadikan referensi tunggal kebenaran (grounding) seluruh AI agent.
+                Central operational grounding knowledge base referenced as the single source of truth for all enterprise AI agents.
               </p>
             </div>
           </div>
@@ -2907,19 +3353,19 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* Q. TANYA AI (DEDICATED RETAIL COPILOT CHAT ASSISTANT)     */}
+      {/* Q. TANYA AI BUSINESS COPILOT                              */}
       {/* ========================================================= */}
-      {subModule === 'tanya_ai' && (
+      {(activeView === 'business-copilot' || activeView === 'tanya_ai') && (
         <div className="space-y-6 animate-in fade-in">
           {/* Header */}
           <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-blue-400" />
-                Tanya AI — Dedicated Retail Copilot &amp; Intelligence Assistant
+                Tanya AI Business Copilot — Dedicated Retail Intelligence Assistant
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Asisten percakapan cerdas yang terhubung dengan database stok fisik dus, transaksi kasir, dan analitik toko.
+                Conversational intelligence assistant connected directly to physical carton stock, daily transactions, and store analytics.
               </p>
             </div>
             <button
@@ -2927,15 +3373,15 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 setChatMessages([
                   {
                     sender: 'ai',
-                    text: 'Halo! Percakapan baru telah dimulai. Apa yang ingin Anda analisis hari ini?',
-                    time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                    text: 'Hello! A new conversation has started. What store insights would you like to analyze today?',
+                    time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
                   },
                 ])
               }
               className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Bersihkan Percakapan</span>
+              <span>Clear Conversation</span>
             </button>
           </div>
 
@@ -2948,10 +3394,10 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
             defaultKnowledgeList={[
               {
                 id: 'kn_tanya1',
-                title: 'FAQ Operasional Mesin Kasir POS & Printer Struk',
-                category: 'SOP & Aturan',
-                content: 'Ukuran kertas standar struk adalah 58mm/80mm thermal. Jika koneksi offline, struk disimpan lokal dan disinkronkan otomatis saat online.',
-                lastUpdated: '10 Okt 2026',
+                title: 'POS Cashier Machine & Receipt Thermal Printer FAQ',
+                category: 'Operations & Guidelines',
+                content: 'Standard receipt paper is 58mm/80mm thermal. If offline, receipts are stored locally in IndexedDB and synchronized automatically upon reconnect.',
+                lastUpdated: '10 Oct 2026',
               },
             ]}
             accentColor="blue"
@@ -2959,7 +3405,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
 
           {/* Quick Prompts Bar */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-zinc-500 font-semibold mr-1">Pertanyaan Cepat:</span>
+            <span className="text-xs text-zinc-500 font-semibold mr-1">Quick Inquiries:</span>
             {quickCopilotPrompts.map((promptText) => (
               <button
                 key={promptText}
@@ -3000,7 +3446,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
               {isAsking && (
                 <div className="flex gap-2 items-center text-xs text-blue-400 font-mono animate-pulse">
                   <Sparkles className="w-4 h-4" />
-                  <span>Tanya AI sedang menganalisis data toko...</span>
+                  <span>Tanya AI is analyzing store data...</span>
                 </div>
               )}
             </div>
@@ -3015,7 +3461,7 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
             >
               <input
                 type="text"
-                placeholder="Tanyakan analisis stok, keuntungan hari ini, atau rekomendasi promo..."
+                placeholder="Ask about stock runways, today's gross profit, or wholesale bundle promotions..."
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
@@ -3026,9 +3472,765 @@ export const AIHubModule: React.FC<AIHubModuleProps> = ({
                 className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition shadow-lg shadow-blue-600/20"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Kirim</span>
+                <span>Send</span>
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5.8 DYNAMIC PRICING OPTIMIZER                             */}
+      {/* ========================================================= */}
+      {activeView === 'dynamic-pricing' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    Dynamic Pricing Optimizer — Real-Time Elasticity &amp; Margin Defense
+                  </h1>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Algorithmic price balancing that enforces minimum margin ceilings, tracks competitor carton rates, and optimizes inventory velocity.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>195ms Latency &bull; Active Engine</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Knowledge Panel */}
+          <AIInstructionKnowledgePanel
+            agentKey="dynamic-pricing"
+            agentTitle="Dynamic Pricing Optimizer"
+            agentRole="Algorithmic Markdown, Margin Floor Sentinel & Wholesale Tier Elasticity"
+            defaultInstruction="Continuously evaluate carton vs single unit velocity. Prevent negative margin spirals by strictly enforcing minimum 18% floor. Recommend promotional bundle markdowns during slow inventory turnover periods."
+            defaultKnowledgeList={[
+              {
+                id: 'kn_dp1',
+                title: 'Minimum Margin Floor Protection Policy',
+                category: 'Pricing Policy',
+                content: 'All algorithmic price adjustments must enforce a minimum gross profit margin of 18.0%. Prices below cost are strictly prohibited.',
+                lastUpdated: '10 Oct 2026',
+              },
+              {
+                id: 'kn_dp2',
+                title: 'Fast-Moving Carton Elasticity Multipliers',
+                category: 'Wholesale Discount Rules',
+                content: 'Mineral water cartons and instant noodles are classified as low elasticity staples. Maximum promotional markdown is capped at 4.5%.',
+                lastUpdated: '08 Oct 2026',
+              },
+            ]}
+            accentColor="emerald"
+          />
+
+          {/* Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Margin Floor Protection</span>
+              <div className="text-xl font-black text-emerald-400 font-mono">18.5% Enforced</div>
+              <p className="text-[10px] text-zinc-400">Automated price reductions locked at floor ceiling.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Projected Weekly Uplift</span>
+              <div className="text-xl font-black text-purple-300 font-mono">+Rp 2,850,000</div>
+              <p className="text-[10px] text-zinc-400">+14.2% gross profit optimization from carton bundles.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Active Dynamic Rules</span>
+              <div className="text-xl font-black text-white font-mono">{dynamicPricingItems.length} SKUs Monitored</div>
+              <p className="text-[10px] text-zinc-400">High-turnover carton wholesale catalog items.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Elasticity Rating</span>
+              <div className="text-xl font-black text-blue-400 font-mono">0.84 (Moderate)</div>
+              <p className="text-[10px] text-zinc-400">Healthy demand elasticity across retail &amp; wholesale.</p>
+            </div>
+          </div>
+
+          {/* Dynamic Pricing Recommendations Table */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm">Algorithmic Price Recommendations</h3>
+              <span className="text-xs text-zinc-400 font-mono">Real-time Margin Optimization Feed</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">SKU &amp; Product</th>
+                    <th className="p-3">Current Price</th>
+                    <th className="p-3">AI Suggested Price</th>
+                    <th className="p-3">Cost Baseline</th>
+                    <th className="p-3">Target Margin</th>
+                    <th className="p-3">Elasticity Index</th>
+                    <th className="p-3">Demand Velocity</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                  {dynamicPricingItems.map((item) => (
+                    <tr key={item.id} className="hover:bg-zinc-850/40 transition">
+                      <td className="p-3 font-semibold text-white">
+                        <div>{item.name}</div>
+                        <div className="text-[10px] font-mono text-zinc-500">{item.sku}</div>
+                      </td>
+                      <td className="p-3 font-mono">Rp {item.currentPrice.toLocaleString('id-ID')}</td>
+                      <td className="p-3 font-mono font-bold text-emerald-400">
+                        Rp {item.suggestedPrice.toLocaleString('id-ID')}
+                      </td>
+                      <td className="p-3 font-mono text-zinc-400">Rp {item.costPrice.toLocaleString('id-ID')}</td>
+                      <td className="p-3 font-bold text-emerald-400">{item.suggestedMargin}%</td>
+                      <td className="p-3 font-mono text-zinc-300">{item.elasticity}</td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {item.demandTrend}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => {
+                            setDynamicPricingItems((prev) =>
+                              prev.map((i) => (i.id === item.id ? { ...i, applied: !i.applied } : i))
+                            );
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            item.applied
+                              ? 'bg-zinc-800 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                          }`}
+                        >
+                          {item.applied ? 'Applied (Active)' : 'Apply Suggested Price'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5.9 CUSTOMER RETENTION & CHURN AI                         */}
+      {/* ========================================================= */}
+      {activeView === 'customer-retention' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center font-bold">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    Customer Retention &amp; Churn AI — RFM Radar &amp; VIP Loyalty Protector
+                  </h1>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Behavioral recency and frequency scoring detecting at-risk wholesale accounts and automating winback retention offers.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-400 font-bold text-xs flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
+                <span>175ms Latency &bull; Churn Radar Live</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Knowledge Panel */}
+          <AIInstructionKnowledgePanel
+            agentKey="customer-retention"
+            agentTitle="Customer Retention & Churn AI"
+            agentRole="RFM Customer Segmentation, Churn Anomaly Detection & WhatsApp Winback Triggers"
+            defaultInstruction="Track customer order frequency and recency. Flag VIP wholesale buyers who have not purchased in >10 days. Automatically draft personalized WhatsApp re-engagement promos with carton bundle discounts."
+            defaultKnowledgeList={[
+              {
+                id: 'kn_cr1',
+                title: 'Wholesale Buyer Inactivity & Churn Thresholds',
+                category: 'CRM & Loyalty',
+                content: 'B2B Wholesale clients typically reorder every 4-7 days. Absence of orders exceeding 10 days triggers an automated VIP Churn Risk status.',
+                lastUpdated: '10 Oct 2026',
+              },
+              {
+                id: 'kn_cr2',
+                title: 'Automated Winback Promotion Policy',
+                category: 'CRM & Loyalty',
+                content: 'Automated re-engagement discounts are restricted to maximum 5% carton vouchers, valid for 72 hours only to incentivize immediate cart completion.',
+                lastUpdated: '09 Oct 2026',
+              },
+            ]}
+            accentColor="emerald"
+          />
+
+          {/* Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Monitored Accounts</span>
+              <div className="text-xl font-black text-white font-mono">1,248 Accounts</div>
+              <p className="text-[10px] text-zinc-400">Registered retail, PWA &amp; B2B buyers.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">At-Risk VIPs Flagged</span>
+              <div className="text-xl font-black text-rose-400 font-mono">14 High-Value Accounts</div>
+              <p className="text-[10px] text-zinc-400">Inactivity gap exceeding 10+ calendar days.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Winback Recovery Rate</span>
+              <div className="text-xl font-black text-teal-400 font-mono">78.4% Success</div>
+              <p className="text-[10px] text-zinc-400">Reactivated accounts over the past 30 days.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Protected Monthly LTV</span>
+              <div className="text-xl font-black text-purple-400 font-mono">Rp 18,200,000</div>
+              <p className="text-[10px] text-zinc-400">Recurring wholesale purchasing volume preserved.</p>
+            </div>
+          </div>
+
+          {/* Directory of At-Risk Accounts */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm">At-Risk Wholesale Accounts &amp; Winback Queue</h3>
+              <span className="text-xs text-zinc-400 font-mono">RFM Algorithm Telemetry</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">Client Account</th>
+                    <th className="p-3">Account Tier</th>
+                    <th className="p-3">Days Inactive</th>
+                    <th className="p-3">Lifetime Spend</th>
+                    <th className="p-3">Churn Probability</th>
+                    <th className="p-3">Preferred Wholesale Items</th>
+                    <th className="p-3">Recommended Winback Action</th>
+                    <th className="p-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                  {retentionClients.map((client) => (
+                    <tr key={client.id} className="hover:bg-zinc-850/40 transition">
+                      <td className="p-3 font-semibold text-white">{client.name}</td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          {client.type}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono text-amber-400 font-bold">{client.lastOrderDays} days</td>
+                      <td className="p-3 font-mono">Rp {client.totalSpend.toLocaleString('id-ID')}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-mono font-bold ${client.churnScore >= 80 ? 'text-rose-400' : 'text-amber-400'}`}>
+                            {client.churnScore}%
+                          </span>
+                          <span className="text-[10px] text-zinc-400">({client.riskLevel})</span>
+                        </div>
+                      </td>
+                      <td className="p-3 text-zinc-400">{client.preferredCarton}</td>
+                      <td className="p-3 text-xs text-blue-300">{client.recommendedAction}</td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => {
+                            setRetentionClients((prev) =>
+                              prev.map((c) =>
+                                c.id === client.id
+                                  ? { ...c, contactStatus: c.contactStatus === 'Re-engaged' ? 'Pending Action' : 'Re-engaged' }
+                                  : c
+                              )
+                            );
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            client.contactStatus === 'Re-engaged'
+                              ? 'bg-zinc-800 text-teal-400 border border-teal-500/30'
+                              : 'bg-teal-600 hover:bg-teal-500 text-white shadow-md'
+                          }`}
+                        >
+                          {client.contactStatus === 'Re-engaged' ? 'Re-engaged' : 'Send WhatsApp Promo'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5.10 SUPPLIER PRICE ANOMALY AI                            */}
+      {/* ========================================================= */}
+      {activeView === 'supplier-anomaly' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                  <Truck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    Supplier Price Anomaly AI — PO Cost Inflation &amp; Invoice Audit Sentinel
+                  </h1>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Autonomous audit engine detecting vendor cost surges, catalog baseline variances, and generating purchase claim dispute memos.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold text-xs flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span>220ms Latency &bull; Invoice Audits Live</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Knowledge Panel */}
+          <AIInstructionKnowledgePanel
+            agentKey="supplier-anomaly"
+            agentTitle="Supplier Price Anomaly AI"
+            agentRole="Purchase Cost Audit, Vendor Discrepancy Detection & Alternative Vendor Sourcing"
+            defaultInstruction="Audit all incoming supplier invoices and purchase orders against standard catalog price baselines. Flag unauthorized price increases >3% per carton. Generate dispute claim memos for the store purchasing team."
+            defaultKnowledgeList={[
+              {
+                id: 'kn_sa1',
+                title: 'Supplier Price Hike Dispute Guidelines',
+                category: 'Procurement Policy',
+                content: 'Any purchase invoice with unit costs exceeding 3.0% above contract baseline without 14-day prior written notice must be flagged and held for buyer review.',
+                lastUpdated: '10 Oct 2026',
+              },
+            ]}
+            accentColor="amber"
+          />
+
+          {/* Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Audited Purchase Orders</span>
+              <div className="text-xl font-black text-white font-mono">142 Invoices</div>
+              <p className="text-[10px] text-zinc-400">Verified against distributor master agreements.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Unapproved Cost Hikes</span>
+              <div className="text-xl font-black text-rose-400 font-mono">4 Lines Flagged</div>
+              <p className="text-[10px] text-zinc-400">Variances exceeding contract tolerance ceilings.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Prevented Overcharges</span>
+              <div className="text-xl font-black text-emerald-400 font-mono">Rp 3,450,000</div>
+              <p className="text-[10px] text-zinc-400">Direct margin protection via invoice dispute memos.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Vendor Trust Score</span>
+              <div className="text-xl font-black text-blue-400 font-mono">94.6% Compliant</div>
+              <p className="text-[10px] text-zinc-400">Consistently accurate billing track record.</p>
+            </div>
+          </div>
+
+          {/* Supplier Price Surges Table */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm">Detected Cost Surges &amp; Invoice Discrepancies</h3>
+              <span className="text-xs text-zinc-400 font-mono">Continuous Invoice Audit Queue</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">Vendor / Supplier</th>
+                    <th className="p-3">Invoice Ref</th>
+                    <th className="p-3">Catalog Item</th>
+                    <th className="p-3">Agreed Baseline</th>
+                    <th className="p-3">Invoiced Price</th>
+                    <th className="p-3">Cost Spike</th>
+                    <th className="p-3">Total Variance</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                  {supplierAnomalies.map((item) => (
+                    <tr key={item.id} className="hover:bg-zinc-850/40 transition">
+                      <td className="p-3 font-semibold text-white">{item.supplierName}</td>
+                      <td className="p-3 font-mono text-zinc-400">{item.invoiceNo}</td>
+                      <td className="p-3">{item.item}</td>
+                      <td className="p-3 font-mono">Rp {item.expectedCost.toLocaleString('id-ID')}</td>
+                      <td className="p-3 font-mono text-rose-400 font-bold">
+                        Rp {item.invoicedCost.toLocaleString('id-ID')}
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                          {item.spikePercent}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-white">
+                        Rp {item.varianceTotal.toLocaleString('id-ID')}
+                      </td>
+                      <td className="p-3 text-right space-x-2">
+                        <button
+                          onClick={() => {
+                            setSupplierAnomalies((prev) =>
+                              prev.map((s) => (s.id === item.id ? { ...s, status: 'Dispute Drafted' } : s))
+                            );
+                            alert(`Dispute memo generated for ${item.supplierName} regarding invoice ${item.invoiceNo}!`);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition cursor-pointer"
+                        >
+                          {item.status === 'Dispute Drafted' ? 'Memo Drafted' : 'Generate Dispute Memo'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5.11 STAFF KPI & PERFORMANCE AI                           */}
+      {/* ========================================================= */}
+      {activeView === 'staff-kpi' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+                  <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    Staff KPI &amp; Performance AI — Cashier Checkout Velocity &amp; Shift Audits
+                  </h1>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Objective telemetry analyzing cashier tender speeds, void transaction anomaly spikes, and carton upsell conversion rates.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 font-bold text-xs flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                <span>165ms Latency &bull; Staff Leaderboard Live</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Knowledge Panel */}
+          <AIInstructionKnowledgePanel
+            agentKey="staff-kpi"
+            agentTitle="Staff KPI & Performance AI"
+            agentRole="Cashier Speed Benchmark, Void/Cancel Pattern Audit & Upsell Coaching"
+            defaultInstruction="Analyze checkout duration, void transactions, refund frequencies, and carton upsell rates by cashier ID. Flag abnormal void spikes and provide actionable coaching recommendations to improve shift productivity."
+            defaultKnowledgeList={[
+              {
+                id: 'kn_sk1',
+                title: 'Frontline Cashier Benchmark Standards',
+                category: 'Staff Operations & SOP',
+                content: 'Target average transaction tender duration is < 25.0 seconds. Void transaction frequency exceeding 1.0% of shift count triggers an automated supervisor review.',
+                lastUpdated: '10 Oct 2026',
+              },
+            ]}
+            accentColor="blue"
+          />
+
+          {/* Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avg Tender Speed</span>
+              <div className="text-xl font-black text-sky-400 font-mono">23.4 sec / order</div>
+              <p className="text-[10px] text-zinc-400">Target benchmark: &lt; 25.0 sec standard.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Void / Cancel Ratio</span>
+              <div className="text-xl font-black text-emerald-400 font-mono">0.38% (Normal)</div>
+              <p className="text-[10px] text-zinc-400">Within acceptable operating safety boundary.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Wholesale Upsell Ratio</span>
+              <div className="text-xl font-black text-purple-400 font-mono">29.5% (+6.2%)</div>
+              <p className="text-[10px] text-zinc-400">Successful prompts converting single to cartons.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Active POS Lanes</span>
+              <div className="text-xl font-black text-white font-mono">3 Station Lanes</div>
+              <p className="text-[10px] text-zinc-400">Real-time terminal shift synchronization.</p>
+            </div>
+          </div>
+
+          {/* Staff Performance Table */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm">Frontline Cashier Performance &amp; AI Coaching Tips</h3>
+              <span className="text-xs text-zinc-400 font-mono">Shift Productivity Telemetry</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">Staff Cashier</th>
+                    <th className="p-3">Assigned Shift</th>
+                    <th className="p-3">Tender Speed</th>
+                    <th className="p-3">Shift Transactions</th>
+                    <th className="p-3">Void Rate</th>
+                    <th className="p-3">Carton Upsell</th>
+                    <th className="p-3">Cash Accuracy</th>
+                    <th className="p-3">Performance Rating</th>
+                    <th className="p-3">AI Coaching Insight</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                  {staffKpiList.map((staff) => (
+                    <tr key={staff.id} className="hover:bg-zinc-850/40 transition">
+                      <td className="p-3 font-semibold text-white">{staff.name}</td>
+                      <td className="p-3 text-zinc-400">{staff.shift}</td>
+                      <td className="p-3 font-mono font-bold text-sky-400">{staff.tenderSpeedSec}s</td>
+                      <td className="p-3 font-mono">{staff.totalTx} tx</td>
+                      <td className="p-3 font-mono">{staff.voidRate}</td>
+                      <td className="p-3 font-mono font-bold text-purple-400">{staff.cartonUpsellRate}</td>
+                      <td className="p-3 font-mono text-emerald-400">{staff.cashAccuracy}</td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {staff.rating}
+                        </span>
+                      </td>
+                      <td className="p-3 text-zinc-300 text-xs">{staff.coachingTip}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5.12 VOICE & BARCODE SCANNER AI                           */}
+      {/* ========================================================= */}
+      {activeView === 'scanner-ai' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold">
+                  <Terminal className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    Voice &amp; Barcode Scanner AI — Multimodal Vision &amp; Audio Stock Intake
+                  </h1>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Sub-frame multimodal camera barcode &amp; QR decoding paired with hands-free warehouse voice dictation for instant carton intake.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-bold text-xs flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                <span>155ms Latency &bull; Omni-Vision 2.5 Active</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Knowledge Panel */}
+          <AIInstructionKnowledgePanel
+            agentKey="scanner-ai"
+            agentTitle="Voice & Barcode Scanner AI"
+            agentRole="Multimodal Vision Scanner, Barcode/QR Decoder & Audio Voice-to-Stock Parser"
+            defaultInstruction="Process continuous barcode camera video streams and audio voice dictation from warehouse staff. Convert phrases like 'tambah lima karton aqua gelas' into verified stock increment events in real time."
+            defaultKnowledgeList={[
+              {
+                id: 'kn_sc1',
+                title: 'Multimodal Barcode & Lot/Batch Decoding Protocol',
+                category: 'Hardware & Scanner Rules',
+                content: 'Supports EAN-13, Code-128, and GS1-128 carton logistics formats. Camera frames are evaluated at 30 FPS with sub-40ms decoding latency.',
+                lastUpdated: '10 Oct 2026',
+              },
+            ]}
+            accentColor="blue"
+          />
+
+          {/* Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Decode Latency</span>
+              <div className="text-xl font-black text-cyan-400 font-mono">38ms (Sub-frame)</div>
+              <p className="text-[10px] text-zinc-400">Zero-lag physical barcode intake engine.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Voice Recognition Accuracy</span>
+              <div className="text-xl font-black text-emerald-400 font-mono">98.7% Confidence</div>
+              <p className="text-[10px] text-zinc-400">Slang and dialect carton extraction engine.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Batch Ingest Rate</span>
+              <div className="text-xl font-black text-purple-400 font-mono">120 Cartons / min</div>
+              <p className="text-[10px] text-zinc-400">Continuous optical conveyor camera intake.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Multimodal Hardware</span>
+              <div className="text-xl font-black text-white font-mono">Dual Vision + Audio</div>
+              <p className="text-[10px] text-zinc-400">WebRTC camera &amp; browser microphone active.</p>
+            </div>
+          </div>
+
+          {/* Multimodal Interactive Playground */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Voice Dictation Test */}
+            <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-cyan-400" />
+                  Voice Intake Simulator (Warehouse Hands-Free)
+                </h3>
+                <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40">
+                  Audio Stream Ready
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Simulate voice dictation from stock keepers (e.g., &quot;tambah tiga karton le minerale 600ml&quot; or &quot;tambah sepuluh dus indomie goreng&quot;).
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={testVoiceText}
+                  onChange={(e) => setTestVoiceText(e.target.value)}
+                  placeholder="Enter audio voice transcription query..."
+                  className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white"
+                />
+                <button
+                  onClick={() => {
+                    if (!testVoiceText.trim()) return;
+                    const newLog = {
+                      id: 'sc_' + Date.now(),
+                      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                      type: 'Voice Command (Audio Mic)',
+                      rawInput: `"${testVoiceText}"`,
+                      detectedProduct: 'Le Minerale 600ml (Dus 24x)',
+                      cartonQty: 3,
+                      confidence: '98.9%',
+                      status: 'Stock Verified & Added',
+                    };
+                    setScannerLogs((prev) => [newLog, ...prev]);
+                    alert(`Voice intake successfully parsed: Added 3 cartons of Le Minerale 600ml!`);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs cursor-pointer transition flex items-center justify-center gap-1.5"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>Simulate Voice Intake</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Barcode Fast Scan Test */}
+            <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <ScanLine className="w-4 h-4 text-emerald-400" />
+                  Optical Barcode &amp; QR Scanner Simulator
+                </h3>
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
+                  Sub-40ms Decode
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Simulate optical barcode scanner gun or camera feed hardware (EAN-13, Code-128, QR Code).
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={testBarcodeText}
+                  onChange={(e) => setTestBarcodeText(e.target.value)}
+                  placeholder="Enter or scan barcode numbers..."
+                  className="w-full p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white font-mono"
+                />
+                <button
+                  onClick={() => {
+                    if (!testBarcodeText.trim()) return;
+                    const newLog = {
+                      id: 'sc_' + Date.now(),
+                      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                      type: 'Barcode (Camera EAN-13)',
+                      rawInput: testBarcodeText,
+                      detectedProduct: 'Indomie Goreng Spesial (Dus 40x)',
+                      cartonQty: 10,
+                      confidence: '100%',
+                      status: 'Stock Verified & Added',
+                    };
+                    setScannerLogs((prev) => [newLog, ...prev]);
+                    alert(`Barcode ${testBarcodeText} verified: Added 10 cartons to warehouse stock!`);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer transition flex items-center justify-center gap-1.5"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Simulate Optical Barcode Scan</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Real-Time Scanned Cartons Queue */}
+          <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm">Real-Time Ingested Carton Stock Queue</h3>
+              <span className="text-xs text-zinc-400 font-mono">Live Multimodal Stream</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">Timestamp</th>
+                    <th className="p-3">Ingest Source</th>
+                    <th className="p-3">Raw Input Telemetry</th>
+                    <th className="p-3">Identified Carton Product</th>
+                    <th className="p-3">Quantity</th>
+                    <th className="p-3">Confidence</th>
+                    <th className="p-3 text-right">Verification Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                  {scannerLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-zinc-850/40 transition">
+                      <td className="p-3 font-mono text-zinc-400">{log.timestamp}</td>
+                      <td className="p-3 font-semibold text-white">{log.type}</td>
+                      <td className="p-3 font-mono text-cyan-300">{log.rawInput}</td>
+                      <td className="p-3 font-semibold text-white">{log.detectedProduct}</td>
+                      <td className="p-3 font-mono font-bold text-emerald-400">+{log.cartonQty} cartons</td>
+                      <td className="p-3 font-mono text-blue-400">{log.confidence}</td>
+                      <td className="p-3 text-right">
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
+                          {log.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

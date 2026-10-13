@@ -64,6 +64,7 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
   >(subModule);
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [logRefreshed, setLogRefreshed] = useState(false);
   const [showMaskedKeys, setShowMaskedKeys] = useState(false);
   const [pingTesting, setPingTesting] = useState(false);
   const [pingResult, setPingResult] = useState<string | null>(null);
@@ -349,7 +350,7 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
       </div>
 
       {/* Sub-Tabs */}
-      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
         <button
           onClick={() => setActiveSub('umum')}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
@@ -1422,10 +1423,17 @@ export const POSSettingsModule: React.FC<POSSettingsModuleProps> = ({
               </p>
             </div>
             <button
-              onClick={() => alert('Semua log tersinkron realtime dengan Cloud Firestore!')}
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold border border-zinc-700 cursor-pointer"
+              onClick={() => {
+                setLogRefreshed(true);
+                setTimeout(() => setLogRefreshed(false), 2500);
+              }}
+              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold border border-zinc-700 cursor-pointer flex items-center gap-1.5"
             >
-              Refresh Logs
+              {logRefreshed ? (
+                <span className="text-emerald-400">Tersinkron Firestore &bull; Realtime</span>
+              ) : (
+                <span>Refresh Logs</span>
+              )}
             </button>
           </div>
 

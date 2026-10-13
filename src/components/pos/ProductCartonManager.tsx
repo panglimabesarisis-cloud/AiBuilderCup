@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -17,6 +17,7 @@ import {
   Edit,
   Trash2,
   X,
+  Check,
   Sparkles,
   Sun,
   Moon,
@@ -32,15 +33,34 @@ import {
   Store,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { collection, onSnapshot, doc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import {
+  collection,
+  onSnapshot,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  addDoc,
+  deleteDoc,
+  writeBatch,
+} from 'firebase/firestore';
 import { DEMO_STORE_ID } from '../../services/dataSeeder';
+import {
+  productsToGroups,
+  variantToProduct,
+  extractVariantsFromGroups,
+  ProductGroupItem,
+  ProductVariantItem,
+} from '../../services/productMapper';
+import { Product, CustomerType } from '../../types';
 import { AddProductForm } from './AddProductForm';
-import { ProductBundles } from './bundles/ProductBundles';
+import { ProductBundlesModule } from './ProductBundlesModule';
+import { DiscountPricingModule } from '../modules/DiscountPricingModule';
+import { useLanguage } from '../../context/LanguageContext';
 
 export type ProductCartonTabType =
   | 'list'
-  | 'paket' // Product Bundles (Paket Produk)
-  | 'carton' // Carton / wholesale packages (previous Paket Produk content)
+  | 'paket'
   | 'kategori'
   | 'harga_diskon'
   | 'masuk'
@@ -49,45 +69,7 @@ export type ProductCartonTabType =
   | 'pergerakan'
   | 'kritis';
 
-export interface ProductVariantItem {
-  id: string;
-  sku: string;
-  name: string;
-  category: string;
-  brand: string;
-  costPrice: number;
-  sellPrice: number;
-  posPrice: number;
-  pwaPrice: number;
-  stock: number;
-  itemsPerCarton: number;
-  weightMl: number;
-  isActive: boolean;
-  isPosVisible: boolean;
-  isPwaVisible: boolean;
-}
-
-export interface ProductGroupItem {
-  id: string;
-  name: string;
-  category: string;
-  brand: string;
-  hasVariants: boolean;
-  sku?: string;
-  costPrice?: number;
-  sellPrice?: number;
-  posPrice?: number;
-  pwaPrice?: number;
-  sellPriceRange?: string;
-  costPriceRange?: string;
-  totalStock: number;
-  itemsPerCarton?: number;
-  weightMl?: number;
-  isActive?: boolean;
-  isPosVisible?: boolean;
-  isPwaVisible?: boolean;
-  variants?: ProductVariantItem[];
-}
+export type { ProductVariantItem, ProductGroupItem };
 
 export const INITIAL_MASTER_PRODUCTS: ProductGroupItem[] = [
   {
@@ -304,15 +286,109 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   initialSubTab,
   initialViewMode,
 }) => {
+  const { language, t, currencyMode, formatCurrency } = useLanguage();
   const [activeTab, setActiveTab] = useState<ProductCartonTabType>(
     initialSubTab || 'list'
   );
-  const [products, setProducts] = useState<ProductGroupItem[]>(INITIAL_MASTER_PRODUCTS);
+  const [products, setProducts] = useState<ProductGroupItem[]>(() => productsToGroups([]));
+  const hasCheckedSeedRef = useRef(false);
+  const startDateInputRef = useRef<HTMLInputElement>(null);
+  const endDateInputRef = useRef<HTMLInputElement>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Single Source of Truth: Listen to Firestore 'products' collection
+  useEffect(() => {
+    let isMounted = true;
+    const colRef = collection(db, 'products');
+
+    const unsubscribe = onSnapshot(
+      colRef,
+      async (snapshot) => {
+        if (!isMounted) return;
+
+        const firestoreProducts = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        })) as Product[];
+
+        // Seed sekali: varian master yang sku-nya belum ada di `products` ditambahkan (id=sku)
+        // Produk POS yang ada jangan diubah.
+        if (!hasCheckedSeedRef.current) {
+          hasCheckedSeedRef.current = true;
+          try {
+            const metaRef = doc(db, 'meta', 'seed_master_products');
+            const metaSnap = await getDoc(metaRef);
+
+            if (!metaSnap.exists()) {
+              const existingSkus = new Set(
+                firestoreProducts
+                  .map((p) => (p.sku || p.id || '').toUpperCase().trim())
+                  .filter(Boolean)
+              );
+
+              const allMasterVariants = extractVariantsFromGroups(INITIAL_MASTER_PRODUCTS);
+              const missingVariants = allMasterVariants.filter(
+                (mv) => !existingSkus.has((mv.sku || mv.id || '').toUpperCase().trim())
+              );
+
+              if (missingVariants.length > 0) {
+                const batch = writeBatch(db);
+                const nowISO = new Date().toISOString();
+
+                for (const variant of missingVariants) {
+                  const targetId = variant.sku || variant.id;
+                  const docRef = doc(colRef, targetId);
+                  const newProduct = variantToProduct(variant, {
+                    id: targetId,
+                    storeId: DEMO_STORE_ID,
+                    createdAt: nowISO,
+                    updatedAt: nowISO,
+                  });
+                  batch.set(docRef, newProduct);
+                }
+
+                batch.set(metaRef, {
+                  seededAt: nowISO,
+                  count: missingVariants.length,
+                  storeId: DEMO_STORE_ID,
+                });
+
+                await batch.commit();
+                // onSnapshot will fire again with seeded documents
+                return;
+              } else {
+                await setDoc(metaRef, {
+                  seededAt: new Date().toISOString(),
+                  count: 0,
+                  storeId: DEMO_STORE_ID,
+                });
+              }
+            }
+          } catch (seedErr) {
+            console.warn('[ProductCartonManager] Seed master products error:', seedErr);
+          }
+        }
+
+        setProducts(productsToGroups(firestoreProducts));
+      },
+      (error) => {
+        console.warn('[ProductCartonManager] Products snapshot error:', error);
+        if (isMounted) {
+          // Fallback to local master products so UI never crashes
+          setProducts(INITIAL_MASTER_PRODUCTS);
+        }
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Theme State: 'dark' or 'light'
   const [tableTheme, setTableTheme] = useState<'dark' | 'light'>(() => {
@@ -368,6 +444,36 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   const [editingGroup, setEditingGroup] = useState<ProductGroupItem | null>(null);
   const [adjustingStockGroup, setAdjustingStockGroup] = useState<ProductGroupItem | null>(null);
   const [stockAdjustQty, setStockAdjustQty] = useState<number>(10);
+  const [stockAdjustReason, setStockAdjustReason] = useState<string>('Penyesuaian Fisik Toko');
+
+  // Package Modal State (Buat Paket Dus Baru)
+  const [isPackageModalOpen, setIsPackageModalOpen] = useState(false);
+  const [selectedPackageSku, setSelectedPackageSku] = useState<string>('');
+  const [packagePiecesPerCarton, setPackagePiecesPerCarton] = useState<number>(24);
+  const [packagePricePerCarton, setPackagePricePerCarton] = useState<number>(0);
+
+  // Category Modal State (+ Tambah Kategori)
+  const [isAddCategoryModalOpen, setIsAddCategoryModalOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState<string>('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState<string>('📦');
+  const [customCategories, setCustomCategories] = useState<
+    Array<{ key: string; name: string; icon: string; color: string; border: string }>
+  >([]);
+
+  // Listen to Firestore 'categories' collection
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      const cats = snapshot.docs.map((d) => ({
+        key: d.id,
+        name: d.data().name || d.id,
+        icon: d.data().icon || '📦',
+        color: 'from-purple-600/20 to-indigo-600/20',
+        border: 'border-purple-500/30',
+      }));
+      setCustomCategories(cats);
+    });
+    return () => unsub();
+  }, []);
 
   // Stock In Form
   const [stockInForm, setStockInForm] = useState({
@@ -387,8 +493,62 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   const [simProductSku, setSimProductSku] = useState<string>('P031');
   const [simQty, setSimQty] = useState<number>(2);
   const [simUnitType, setSimUnitType] = useState<'carton' | 'unit'>('carton');
-  const [simCustomerType, setSimCustomerType] = useState<'regular' | 'pwa_member'>('pwa_member');
+  const [simCustomerType, setSimCustomerType] = useState<string>('CUST-VIP');
+  const [availableCustomerTypes, setAvailableCustomerTypes] = useState<CustomerType[]>([
+    {
+      id: 'TYPE-01',
+      storeId: 'store_001',
+      name: 'MEMBER VIP PWA',
+      code: 'CUST-VIP',
+      discountRate: 5,
+      pointMultiplier: 2,
+      status: 'active',
+    },
+    {
+      id: 'TYPE-02',
+      storeId: 'store_001',
+      name: 'WHOLESALE / GROSIR',
+      code: 'CUST-WHL',
+      discountRate: 10,
+      pointMultiplier: 1.5,
+      status: 'active',
+    },
+    {
+      id: 'TYPE-03',
+      storeId: 'store_001',
+      name: 'REGULER / UMUM',
+      code: 'CUST-REG',
+      discountRate: 0,
+      pointMultiplier: 1,
+      status: 'active',
+    },
+  ]);
   const [packageCategoryFilter, setPackageCategoryFilter] = useState<string>('ALL');
+
+  // Real-time synchronization of customer_types for Harga Diskon simulator
+  useEffect(() => {
+    try {
+      const typesColRef = collection(db, 'stores', 'store_001', 'customer_types');
+      const unsub = onSnapshot(
+        typesColRef,
+        (snap) => {
+          if (!snap.empty) {
+            const typesList: CustomerType[] = snap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<CustomerType, 'id'>),
+            }));
+            setAvailableCustomerTypes(typesList);
+          }
+        },
+        (err) => {
+          console.warn('[ProductCartonManager] customer_types snapshot error:', err);
+        }
+      );
+      return () => unsub();
+    } catch (e) {
+      console.warn('[ProductCartonManager] listener setup error:', e);
+    }
+  }, []);
 
   // New Product Form
   const [newProductForm, setNewProductForm] = useState({
@@ -458,30 +618,163 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   };
 
   // Handle Save Edit Product
-  const handleSaveEditProduct = (e: React.FormEvent) => {
+  const handleSaveEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGroup) return;
-    setProducts((prev) =>
-      prev.map((p) => (p.id === editingGroup.id ? editingGroup : p))
-    );
-    setEditingGroup(null);
-    showToast(`Produk "${editingGroup.name}" berhasil diperbarui!`);
+
+    if (!editingGroup.name.trim()) {
+      showToast('Nama produk wajib diisi!');
+      return;
+    }
+
+    const costPrice = Number(editingGroup.costPrice) || 0;
+    const posPrice = Number(editingGroup.posPrice ?? editingGroup.sellPrice) || 0;
+    const pwaPrice = Number(editingGroup.pwaPrice ?? editingGroup.sellPrice) || 0;
+    const sellPrice = posPrice;
+
+    if (costPrice < 0 || posPrice < 0 || pwaPrice < 0 || sellPrice < 0) {
+      showToast('Harga dan modal tidak boleh bernilai negatif (≥ 0)!');
+      return;
+    }
+
+    try {
+      if (editingGroup.hasVariants && editingGroup.variants && editingGroup.variants.length > 0) {
+        for (const v of editingGroup.variants) {
+          const docId = v.sku || v.id;
+          await updateDoc(doc(db, 'products', docId), {
+            name: editingGroup.name,
+            category: editingGroup.category,
+            brand: editingGroup.brand || '',
+            costPerUnit: costPrice,
+            pricePerUnit: posPrice,
+            piecesPerCarton: Number(editingGroup.itemsPerCarton) || v.itemsPerCarton || 1,
+            weightMl: Number(editingGroup.weightMl) || v.weightMl || 0,
+            stockInUnits: Number(editingGroup.totalStock) || 0,
+            isActive: editingGroup.isActive !== false,
+            isPosVisible: editingGroup.isPosVisible !== false,
+            isPwaVisible: editingGroup.isPwaVisible !== false,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } else {
+        const docId = editingGroup.sku || editingGroup.id.replace(/^grp_/, '');
+        await updateDoc(doc(db, 'products', docId), {
+          name: editingGroup.name,
+          category: editingGroup.category,
+          brand: editingGroup.brand || '',
+          sku: editingGroup.sku || docId,
+          costPerUnit: costPrice,
+          pricePerUnit: posPrice,
+          piecesPerCarton: Number(editingGroup.itemsPerCarton) || 1,
+          weightMl: Number(editingGroup.weightMl) || 0,
+          stockInUnits: Number(editingGroup.totalStock) || 0,
+          isActive: editingGroup.isActive !== false,
+          isPosVisible: editingGroup.isPosVisible !== false,
+          isPwaVisible: editingGroup.isPwaVisible !== false,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      showToast(`Produk "${editingGroup.name}" berhasil diperbarui!`);
+      setEditingGroup(null);
+    } catch (err: any) {
+      console.warn('Error updating product in Firestore:', err);
+      showToast(`Gagal memperbarui produk: ${err.message || err}`);
+    }
   };
 
   // Handle Save Stock Adjustment
-  const handleSaveStockAdjustment = (delta: number) => {
+  const handleSaveStockAdjustment = async (delta: number, reason?: string) => {
     if (!adjustingStockGroup) return;
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === adjustingStockGroup.id) {
-          const updatedStock = Math.max(0, p.totalStock + delta);
-          return { ...p, totalStock: updatedStock };
-        }
-        return p;
-      })
-    );
-    showToast(`Stok ${adjustingStockGroup.name} disesuaikan: ${delta >= 0 ? '+' : ''}${delta} unit!`);
-    setAdjustingStockGroup(null);
+
+    const newStock = adjustingStockGroup.totalStock + delta;
+    if (newStock < 0) {
+      showToast('Stok tidak boleh kurang dari 0!');
+      return;
+    }
+
+    const adjustmentReason = reason || stockAdjustReason || 'Penyesuaian Fisik Toko';
+
+    try {
+      const targetDocId =
+        adjustingStockGroup.hasVariants && adjustingStockGroup.variants && adjustingStockGroup.variants.length > 0
+          ? (adjustingStockGroup.variants[0].sku || adjustingStockGroup.variants[0].id)
+          : (adjustingStockGroup.sku || adjustingStockGroup.id.replace(/^grp_/, ''));
+
+      // 1. updateDoc stockInUnits
+      await updateDoc(doc(db, 'products', targetDocId), {
+        stockInUnits: newStock,
+        updatedAt: new Date().toISOString(),
+      });
+
+      // 2. Buat 1 dokumen stock_movements berfield sama dengan item stockCards di InventoryTrackingModule
+      const movementRef = doc(collection(db, 'stock_movements'));
+      await setDoc(movementRef, {
+        id: `MUT-${Date.now().toString().slice(-6)}`,
+        date: new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) + ' WIB',
+        productName: adjustingStockGroup.name,
+        sku: adjustingStockGroup.sku || targetDocId,
+        location: 'RiskCart Flagship Store',
+        mutationType: delta >= 0 ? 'MASUK' : 'KELUAR',
+        refDoc: `ADJ #STK-${Date.now().toString().slice(-4)}`,
+        qtyChange: delta,
+        runningBalance: newStock,
+        actor: 'Admin / Kasir',
+        notes: adjustmentReason,
+        storeId: DEMO_STORE_ID,
+        createdAt: new Date().toISOString(),
+      });
+
+      showToast(`Stok ${adjustingStockGroup.name} disesuaikan: ${delta >= 0 ? '+' : ''}${delta} unit!`);
+      setAdjustingStockGroup(null);
+    } catch (err: any) {
+      console.warn('Error saving stock adjustment:', err);
+      showToast(`Gagal menyesuaikan stok: ${err.message || err}`);
+    }
+  };
+
+  // Handle Save Package (Buat Paket Dus Baru)
+  const handleSavePackage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPackageSku) {
+      showToast('Pilih produk terlebih dahulu!');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'products', selectedPackageSku), {
+        piecesPerCarton: Number(packagePiecesPerCarton) || 1,
+        pricePerCarton: Number(packagePricePerCarton) || 0,
+        updatedAt: new Date().toISOString(),
+      });
+      showToast('Paket dus berhasil diperbarui di Firestore!');
+      setIsPackageModalOpen(false);
+    } catch (err: any) {
+      console.warn('Error updating package in Firestore:', err);
+      showToast(`Gagal menyimpan paket: ${err.message || err}`);
+    }
+  };
+
+  // Handle Save New Category (+ Tambah Kategori)
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategoryName.trim()) {
+      showToast('Nama kategori wajib diisi!');
+      return;
+    }
+    const catKey = newCategoryName.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    try {
+      await setDoc(doc(db, 'categories', catKey), {
+        name: newCategoryName.trim(),
+        icon: newCategoryIcon || '📦',
+        createdAt: new Date().toISOString(),
+      });
+      showToast(`Kategori "${newCategoryName}" berhasil ditambahkan!`);
+      setNewCategoryName('');
+      setIsAddCategoryModalOpen(false);
+    } catch (err: any) {
+      console.warn('Error saving category to Firestore:', err);
+      showToast(`Gagal menambah kategori: ${err.message || err}`);
+    }
   };
 
   // Dispatch Auto-Restock
@@ -559,11 +852,24 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
   };
 
   // Delete product
-  const handleDeleteProduct = (groupId: string) => {
+  const handleDeleteProduct = async (groupId: string) => {
     if (confirm('Delete this product from catalog?')) {
-      setProducts((prev) => prev.filter((p) => p.id !== groupId));
-      setActiveDropdownId(null);
-      showToast('Product successfully removed.');
+      try {
+        const targetGroup = products.find((p) => p.id === groupId);
+        if (targetGroup && targetGroup.hasVariants && targetGroup.variants) {
+          for (const v of targetGroup.variants) {
+            await deleteDoc(doc(db, 'products', v.sku || v.id));
+          }
+        } else {
+          const docId = targetGroup?.sku || groupId.replace(/^grp_/, '');
+          await deleteDoc(doc(db, 'products', docId));
+        }
+        setActiveDropdownId(null);
+        showToast('Product successfully removed from Firestore.');
+      } catch (err: any) {
+        console.warn('Error deleting product from Firestore:', err);
+        showToast(`Gagal menghapus produk: ${err.message || err}`);
+      }
     }
   };
 
@@ -595,33 +901,119 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
 
   // Refresh
   const handleRefresh = () => {
-    showToast('Refreshing product catalog...');
-    setTimeout(() => {
-      setProducts(INITIAL_MASTER_PRODUCTS);
-      showToast('Product catalog synchronized!');
-    }, 500);
+    showToast('Product catalog synchronized with Firestore!');
+  };
+
+  const isDateRangeInvalid = Boolean(startDate && endDate && startDate > endDate);
+
+  const checkDateMatch = (createdAt?: string): boolean => {
+    if (!createdAt) return true; // tanpa createdAt selalu ikut
+    if (isDateRangeInvalid) return true; // jika awal > akhir, jangan filter out
+    const itemDate = createdAt.slice(0, 10);
+    if (startDate && itemDate < startDate) return false;
+    if (endDate && itemDate > endDate) return false;
+    return true;
   };
 
   // Filtering
-  const filteredProducts = products.filter((p) => {
-    const matchesSearch =
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (p.variants && p.variants.some((v) => v.name.toLowerCase().includes(searchTerm.toLowerCase()) || v.sku.toLowerCase().includes(searchTerm.toLowerCase())));
+  const filteredProducts = products
+    .map((group) => {
+      if (group.hasVariants && group.variants) {
+        const matchingVariants = group.variants.filter((v) => {
+          if (!checkDateMatch(v.createdAt || group.createdAt)) return false;
 
-    if (activeTab === 'kritis') {
-      return matchesSearch && p.totalStock <= 5;
-    }
+          if (!searchTerm) return true;
+          const term = searchTerm.toLowerCase();
+          return (
+            v.name.toLowerCase().includes(term) ||
+            v.sku.toLowerCase().includes(term) ||
+            v.category.toLowerCase().includes(term) ||
+            v.brand.toLowerCase().includes(term) ||
+            group.name.toLowerCase().includes(term)
+          );
+        });
 
-    return matchesSearch;
-  });
+        return {
+          ...group,
+          variants: matchingVariants,
+        };
+      }
+      return group;
+    })
+    .filter((p) => {
+      if (p.hasVariants) {
+        if (!p.variants || p.variants.length === 0) return false;
+        if (activeTab === 'kritis') {
+          const remainingStock = p.variants.reduce((sum, v) => sum + v.stock, 0);
+          return remainingStock <= 5;
+        }
+        return true;
+      }
+
+      // Standalone product
+      if (!checkDateMatch(p.createdAt)) return false;
+
+      const term = searchTerm.toLowerCase();
+      const matchesSearch =
+        !searchTerm ||
+        p.name.toLowerCase().includes(term) ||
+        p.category.toLowerCase().includes(term) ||
+        p.brand.toLowerCase().includes(term) ||
+        (p.sku && p.sku.toLowerCase().includes(term));
+
+      if (!matchesSearch) return false;
+
+      if (activeTab === 'kritis') {
+        return p.totalStock <= 5;
+      }
+
+      return true;
+    });
 
   // Count total displayed products
-  const totalCount = products.reduce((acc, p) => acc + (p.variants ? p.variants.length : 1), 0);
+  const totalCount = filteredProducts.reduce((acc, p) => acc + (p.hasVariants && p.variants ? p.variants.length : 1), 0);
 
   const isDark = tableTheme === 'dark';
+
+  const handleSaveAddProductForm = async (newProduct: ProductGroupItem, addAnother = false) => {
+    try {
+      const nowISO = new Date().toISOString();
+      if (newProduct.hasVariants && newProduct.variants && newProduct.variants.length > 0) {
+        for (const v of newProduct.variants) {
+          const sku = v.sku || v.id;
+          const prod = variantToProduct(v, {
+            id: sku,
+            sku,
+            brand: v.brand || newProduct.brand,
+            category: v.category || newProduct.category,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+          });
+          await setDoc(doc(db, 'products', sku), prod);
+        }
+      } else {
+        const sku = newProduct.sku || newProduct.id.replace(/^grp_/, '');
+        const prod = variantToProduct(
+          { ...newProduct, stock: newProduct.totalStock },
+          {
+            id: sku,
+            sku,
+            createdAt: nowISO,
+            updatedAt: nowISO,
+          }
+        );
+        await setDoc(doc(db, 'products', sku), prod);
+      }
+
+      showToast(`Produk "${newProduct.name}" berhasil disimpan ke Firestore!`);
+      if (!addAnother) {
+        setViewMode('table');
+      }
+    } catch (err: any) {
+      console.warn('Error saving product to Firestore:', err);
+      showToast(`Gagal menyimpan produk: ${err.message || err}`);
+    }
+  };
 
   if (viewMode === 'add_product') {
     return (
@@ -636,23 +1028,11 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
           isDark={isDark}
           onBack={() => setViewMode('table')}
           onToggleTheme={handleSetTheme}
-          onSubmit={(newProduct) => {
-            setProducts([newProduct, ...products]);
-            setViewMode('table');
-            showToast(`Produk "${newProduct.name}" berhasil ditambahkan!`);
-          }}
-          onSaveAndAddAnother={(newProduct) => {
-            setProducts([newProduct, ...products]);
-            showToast(`Produk "${newProduct.name}" disimpan!`);
-          }}
+          onSubmit={(newProduct) => handleSaveAddProductForm(newProduct, false)}
+          onSaveAndAddAnother={(newProduct) => handleSaveAddProductForm(newProduct, true)}
         />
       </div>
     );
-  }
-
-  // Paket Produk = Product Bundles sub-module (own breadcrumb, filters and add/edit views)
-  if (activeTab === 'paket') {
-    return <ProductBundles onBackToProducts={() => setActiveTab('list')} />;
   }
 
   return (
@@ -670,10 +1050,12 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
             <Package className="w-6 h-6 text-blue-500" />
-            <span>Halaman Produk</span>
+            <span>{t('product_management', 'Halaman Produk')}</span>
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
-            Pusat kelola List Produk, Paket Produk (Dus/Karton), Kategori &amp; Brand, serta Pengaturan Harga Diskon.
+            {language === 'en'
+              ? 'Manage product catalog, carton/box packaging conversions, and pricing variants in real-time.'
+              : 'Pusat kelola List Produk, Paket Produk (Dus/Karton), Kategori & Brand, serta Pengaturan Harga Diskon.'}
           </p>
         </div>
 
@@ -723,7 +1105,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/20 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Tambah Produk</span>
+            <span>{t('add_product', 'Tambah Produk')}</span>
           </button>
         </div>
       </div>
@@ -737,7 +1119,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               : 'bg-slate-100 border-slate-200 text-slate-600'
           }`}
         >
-          {/* 1. List Produk */}
+          {/* 1. Product List */}
           <button
             onClick={() => setActiveTab('list')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
@@ -751,46 +1133,33 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             }`}
           >
             <Boxes className="w-4 h-4" />
-            <span>List Produk</span>
+            <span>Product List</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/20 text-white font-mono">
               {totalCount}
             </span>
           </button>
 
-          {/* 2. Paket Produk (Product Bundles). It opens its own full page, so this pill is never the active tab here. */}
+          {/* 2. Product Bundles (Paket Produk) */}
           <button
             onClick={() => setActiveTab('paket')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
-              isDark
-                ? 'hover:text-white hover:bg-zinc-800/50'
-                : 'hover:text-slate-900 hover:bg-slate-200/60'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Paket Produk</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/20 text-white font-mono">
-              Bundles
-            </span>
-          </button>
-
-          {/* 2b. Dus / Karton (wholesale carton packages) */}
-          <button
-            onClick={() => setActiveTab('carton')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
-              activeTab === 'carton'
+              activeTab === 'paket'
                 ? isDark
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'bg-amber-600 text-white shadow-xs'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-blue-600 text-white shadow-xs'
                 : isDark
                 ? 'hover:text-white hover:bg-zinc-800/50'
                 : 'hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Boxes className="w-4 h-4" />
-            <span>Dus / Karton</span>
+            <Package className="w-4 h-4" />
+            <span>Product Bundles</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/20 text-white font-mono">
+              Paket Produk
+            </span>
           </button>
 
-          {/* 3. Kategori dan Brand */}
+          {/* 3. Categories & Brands */}
           <button
             onClick={() => setActiveTab('kategori')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
@@ -804,10 +1173,10 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             }`}
           >
             <Tag className="w-4 h-4" />
-            <span>Kategori dan Brand</span>
+            <span>Categories &amp; Brands</span>
           </button>
 
-          {/* 4. Harga Diskon */}
+          {/* 4. Discount Pricing */}
           <button
             onClick={() => setActiveTab('harga_diskon')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
@@ -821,7 +1190,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             }`}
           >
             <Percent className="w-4 h-4" />
-            <span>Harga Diskon</span>
+            <span>Discount Pricing</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-400/20 text-emerald-300 font-bold">
               Promo
             </span>
@@ -841,7 +1210,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               activeTab === 'masuk' ? 'bg-zinc-800 text-white font-bold' : 'hover:text-white'
             }`}
           >
-            Masuk
+            Inflow
           </button>
           <button
             onClick={() => setActiveTab('keluar')}
@@ -849,7 +1218,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               activeTab === 'keluar' ? 'bg-zinc-800 text-white font-bold' : 'hover:text-white'
             }`}
           >
-            Keluar
+            Outflow
           </button>
           <button
             onClick={() => setActiveTab('opname')}
@@ -857,7 +1226,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               activeTab === 'opname' ? 'bg-zinc-800 text-white font-bold' : 'hover:text-white'
             }`}
           >
-            Opname
+            Audit
           </button>
           <button
             onClick={() => setActiveTab('pergerakan')}
@@ -865,7 +1234,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               activeTab === 'pergerakan' ? 'bg-zinc-800 text-white font-bold' : 'hover:text-white'
             }`}
           >
-            Mutasi
+            Movements
           </button>
           <button
             onClick={() => setActiveTab('kritis')}
@@ -874,7 +1243,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
-            <span>Kritis</span>
+            <span>Critical</span>
           </button>
         </div>
       </div>
@@ -909,17 +1278,30 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             <span className="text-[11px] font-medium">Created from</span>
             <div className="relative">
               <input
-                type="text"
-                placeholder="dd/mm/yyyy"
+                ref={startDateInputRef}
+                type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className={`w-28 px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                className={`w-32 px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer ${
                   isDark
-                    ? 'border-zinc-800 bg-zinc-950 text-zinc-200'
-                    : 'border-slate-200 bg-slate-50 text-slate-700'
+                    ? 'border-zinc-800 bg-zinc-950 text-zinc-200 [color-scheme:dark]'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 [color-scheme:light]'
                 }`}
               />
-              <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    startDateInputRef.current?.showPicker();
+                  } catch {
+                    startDateInputRef.current?.focus();
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-blue-400 cursor-pointer p-0.5"
+                title="Pilih tanggal mulai"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
@@ -927,20 +1309,53 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
             <span className="text-[11px] font-medium">To</span>
             <div className="relative">
               <input
-                type="text"
-                placeholder="dd/mm/yyyy"
+                ref={endDateInputRef}
+                type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className={`w-28 px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                className={`w-32 px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer ${
                   isDark
-                    ? 'border-zinc-800 bg-zinc-950 text-zinc-200'
-                    : 'border-slate-200 bg-slate-50 text-slate-700'
+                    ? 'border-zinc-800 bg-zinc-950 text-zinc-200 [color-scheme:dark]'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 [color-scheme:light]'
                 }`}
               />
-              <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    endDateInputRef.current?.showPicker();
+                  } catch {
+                    endDateInputRef.current?.focus();
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-blue-400 cursor-pointer p-0.5"
+                title="Pilih tanggal akhir"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
+          {/* Tombol Reset */}
+          <button
+            type="button"
+            onClick={() => {
+              setStartDate('');
+              setEndDate('');
+            }}
+            disabled={!startDate && !endDate}
+            className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              isDark
+                ? 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700'
+                : 'border-slate-200 bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+            }`}
+            title="Reset filter tanggal"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+
+          {/* N Products Counter */}
           <div
             className={`px-3 py-1.5 rounded-lg border font-bold text-xs ${
               isDark
@@ -950,6 +1365,13 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
           >
             {totalCount} products
           </div>
+
+          {/* Pesan kecil bila awal > akhir */}
+          {isDateRangeInvalid && (
+            <span className="text-[11px] text-rose-400 font-medium">
+              Tanggal awal tidak boleh lebih besar dari tanggal akhir
+            </span>
+          )}
         </div>
       </div>
 
@@ -1015,6 +1437,11 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                             className="cursor-pointer group flex items-start gap-2"
                           >
                             <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroup(group.id);
+                              }}
                               className={`mt-0.5 transition ${
                                 isDark
                                   ? 'text-zinc-500 group-hover:text-blue-400'
@@ -1101,7 +1528,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                         {group.hasVariants
                           ? group.costPriceRange || '-'
                           : group.costPrice
-                          ? `Rp ${group.costPrice.toLocaleString('id-ID')}`
+                          ? formatCurrency(group.costPrice)
                           : '-'}
                       </td>
 
@@ -1114,7 +1541,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                         {group.hasVariants
                           ? group.sellPriceRange || '-'
                           : group.sellPrice
-                          ? `Rp ${group.sellPrice.toLocaleString('id-ID')}`
+                          ? formatCurrency(group.sellPrice)
                           : '-'}
                       </td>
 
@@ -1246,7 +1673,20 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                             <button
                               onClick={() => {
                                 setActiveDropdownId(null);
-                                setEditingGroup(group);
+                                const v = group.variants?.[0];
+                                setEditingGroup({
+                                  ...group,
+                                  sku: group.sku || v?.sku || `SKU-${group.id.toUpperCase()}`,
+                                  costPrice: group.costPrice ?? v?.costPrice ?? 20000,
+                                  sellPrice: group.sellPrice ?? v?.sellPrice ?? 25000,
+                                  posPrice: group.posPrice ?? v?.posPrice ?? group.sellPrice ?? 25000,
+                                  pwaPrice: group.pwaPrice ?? v?.pwaPrice ?? 25000,
+                                  itemsPerCarton: group.itemsPerCarton ?? v?.itemsPerCarton ?? 24,
+                                  weightMl: group.weightMl ?? v?.weightMl ?? 600,
+                                  isActive: group.isActive !== false,
+                                  isPosVisible: group.isPosVisible !== false,
+                                  isPwaVisible: group.isPwaVisible !== false,
+                                });
                               }}
                               className={`w-full px-3 py-2 flex items-center gap-2 cursor-pointer ${
                                 isDark
@@ -1338,7 +1778,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                               isDark ? 'text-zinc-400' : 'text-slate-600'
                             }`}
                           >
-                            Rp {v.costPrice.toLocaleString('id-ID')}
+                            {formatCurrency(v.costPrice)}
                           </td>
 
                           {/* Selling Price */}
@@ -1347,7 +1787,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                               isDark ? 'text-zinc-200' : 'text-slate-800'
                             }`}
                           >
-                            Rp {v.sellPrice.toLocaleString('id-ID')}
+                            {formatCurrency(v.sellPrice)}
                           </td>
 
                           {/* POS Price */}
@@ -1447,7 +1887,22 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                           {/* Action */}
                           <td className="py-2.5 px-4 text-right">
                             <button
-                              onClick={() => setEditingGroup(group)}
+                              onClick={() => {
+                                const v = group.variants?.[0];
+                                setEditingGroup({
+                                  ...group,
+                                  sku: group.sku || v?.sku || `SKU-${group.id.toUpperCase()}`,
+                                  costPrice: group.costPrice ?? v?.costPrice ?? 20000,
+                                  sellPrice: group.sellPrice ?? v?.sellPrice ?? 25000,
+                                  posPrice: group.posPrice ?? v?.posPrice ?? group.sellPrice ?? 25000,
+                                  pwaPrice: group.pwaPrice ?? v?.pwaPrice ?? 25000,
+                                  itemsPerCarton: group.itemsPerCarton ?? v?.itemsPerCarton ?? 24,
+                                  weightMl: group.weightMl ?? v?.weightMl ?? 600,
+                                  isActive: group.isActive !== false,
+                                  isPosVisible: group.isPosVisible !== false,
+                                  isPwaVisible: group.isPwaVisible !== false,
+                                });
+                              }}
                               className={`p-1 rounded transition cursor-pointer ${
                                 isDark
                                   ? 'text-zinc-400 hover:text-blue-400 hover:bg-zinc-800'
@@ -1470,266 +1925,11 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 2. TAB: PAKET PRODUK (Konversi Dus / Karton, Grosir, & Bundling Multi-Pack) */}
+      {/* 2. TAB: PAKET PRODUK (Product Bundles Directory & Add Bundle View)        */}
       {/* ========================================================================= */}
-      {activeTab === 'carton' && (
+      {activeTab === 'paket' && (
         <div className="space-y-4 animate-in fade-in">
-          {/* Header & KPI Summary */}
-          <div
-            className={`rounded-2xl p-6 border shadow-sm transition-colors ${
-              isDark
-                ? 'bg-zinc-900/95 border-zinc-800 text-zinc-200'
-                : 'bg-white border-slate-200 text-slate-800'
-            }`}
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4 border-zinc-800/40">
-              <div>
-                <h3 className="text-base font-bold flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-amber-500" />
-                  <span>Paket Produk (Manajemen Dus, Karton &amp; Grosir)</span>
-                </h3>
-                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
-                  Kelola kemasan dus/karton, rasio isi per karton, dan harga jual grosir paket untuk toko ritel &amp; PWA.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setViewMode('add_product')}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-sm transition cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Buat Paket Dus Baru</span>
-                </button>
-              </div>
-            </div>
-
-            {/* KPI Cards for Packages */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-4">
-              <div
-                className={`p-3.5 rounded-xl border flex items-center gap-3 ${
-                  isDark ? 'bg-zinc-950/60 border-zinc-800' : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center font-bold">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[11px] text-zinc-400 font-medium">SKU Paket Dus</div>
-                  <div className="text-lg font-bold text-white">
-                    {products.reduce((acc, p) => acc + (p.variants || []).filter((v) => v.itemsPerCarton >= 1).length, 0)} Paket
-                  </div>
-                </div>
-              </div>
-
-              <div
-                className={`p-3.5 rounded-xl border flex items-center gap-3 ${
-                  isDark ? 'bg-zinc-950/60 border-zinc-800' : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center font-bold">
-                  <Boxes className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[11px] text-zinc-400 font-medium">Total Stok Karton Siap</div>
-                  <div className="text-lg font-bold text-blue-400 font-mono">
-                    {products.reduce((acc, p) => {
-                      const v = p.variants?.[0];
-                      const ipc = v?.itemsPerCarton || 24;
-                      return acc + Math.floor((p.totalStock || 0) / ipc);
-                    }, 0)} Karton
-                  </div>
-                </div>
-              </div>
-
-              <div
-                className={`p-3.5 rounded-xl border flex items-center gap-3 ${
-                  isDark ? 'bg-zinc-950/60 border-zinc-800' : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold">
-                  <Percent className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[11px] text-zinc-400 font-medium">Rata-rata Diskon Dus</div>
-                  <div className="text-lg font-bold text-emerald-400 font-mono">~10% Lebih Hemat</div>
-                </div>
-              </div>
-
-              <div
-                className={`p-3.5 rounded-xl border flex items-center gap-3 ${
-                  isDark ? 'bg-zinc-950/60 border-zinc-800' : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center font-bold">
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[11px] text-zinc-400 font-medium">Margin Rata-rata Dus</div>
-                  <div className="text-lg font-bold text-purple-400 font-mono">18.5% Laba Kotor</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Table: Paket Produk & Detail Dus */}
-          <div
-            className={`rounded-2xl border shadow-sm overflow-hidden transition-colors ${
-              isDark ? 'bg-zinc-900/95 border-zinc-800' : 'bg-white border-slate-200'
-            }`}
-          >
-            <div className="p-4 border-b border-zinc-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <span className="font-bold text-white flex items-center gap-1.5">
-                <Boxes className="w-4 h-4 text-amber-500" />
-                Daftar Paket Dus / Karton Terdaftar
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-zinc-400 text-[11px]">Filter Kategori:</span>
-                <select
-                  value={packageCategoryFilter}
-                  onChange={(e) => setPackageCategoryFilter(e.target.value)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs ${
-                    isDark ? 'bg-zinc-950 border-zinc-800 text-zinc-200' : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                >
-                  <option value="ALL">Semua Kategori</option>
-                  <option value="MINERAL">MINERAL</option>
-                  <option value="FLAVORED">FLAVORED</option>
-                  <option value="COLA">COLA</option>
-                  <option value="GAS">GAS</option>
-                  <option value="COFFEE">COFFEE</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr
-                    className={`font-bold uppercase text-[10px] tracking-wider border-b whitespace-nowrap ${
-                      isDark ? 'bg-zinc-950/70 text-zinc-400 border-zinc-800' : 'bg-slate-50 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    <th className="py-3 px-4">Nama Produk Paket</th>
-                    <th className="py-3 px-3">Kategori &amp; Brand</th>
-                    <th className="py-3 px-3 text-center">Isi Satuan (Pcs)</th>
-                    <th className="py-3 px-3 text-center">Berat / Dus</th>
-                    <th className="py-3 px-3 text-right">Modal per Dus</th>
-                    <th className="py-3 px-3 text-right">Harga Grosir Dus</th>
-                    <th className="py-3 px-3 text-right">Nilai Eceran Satuan</th>
-                    <th className="py-3 px-3 text-center">Hemat Pembeli</th>
-                    <th className="py-3 px-3 text-center">Stok Dus Gudang</th>
-                    <th className="py-3 px-4 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className={`divide-y ${isDark ? 'divide-zinc-800/80 text-zinc-200' : 'divide-slate-100 text-slate-800'}`}>
-                  {products
-                    .filter((p) => packageCategoryFilter === 'ALL' || p.category.toUpperCase() === packageCategoryFilter)
-                    .map((p) => {
-                      const v = p.variants?.[0] || {
-                        id: p.id,
-                        sku: p.sku,
-                        name: p.name,
-                        category: p.category,
-                        brand: p.brand,
-                        costPrice: 20000,
-                        sellPrice: 25000,
-                        posPrice: 25000,
-                        pwaPrice: 25000,
-                        stock: p.totalStock,
-                        itemsPerCarton: p.itemsPerCarton || 24,
-                        weightMl: p.weightMl || 600,
-                        isActive: true,
-                        isPosVisible: true,
-                        isPwaVisible: true,
-                      };
-
-                      const itemsInCarton = v.itemsPerCarton || 24;
-                      const cartonCost = v.costPrice * itemsInCarton;
-                      const retailTotal = v.sellPrice * itemsInCarton;
-                      // Calculated wholesale price with approx 8%-12% carton wholesale discount
-                      const wholesaleCartonPrice = Math.round((retailTotal * 0.9) / 1000) * 1000;
-                      const savingsAmount = retailTotal - wholesaleCartonPrice;
-                      const savingsPercent = retailTotal > 0 ? ((savingsAmount / retailTotal) * 100).toFixed(0) : '0';
-                      const stockCartons = Math.floor(p.totalStock / itemsInCarton);
-
-                      return (
-                        <tr
-                          key={p.id}
-                          className={`hover:bg-zinc-800/30 transition-colors ${
-                            isDark ? '' : 'hover:bg-slate-50'
-                          }`}
-                        >
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-white flex items-center gap-2">
-                              <span>{p.name}</span>
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">
-                                Dus
-                              </span>
-                            </div>
-                            <span className="text-[10px] text-zinc-500 font-mono">SKU: {p.sku}</span>
-                          </td>
-                          <td className="py-3 px-3">
-                            <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-semibold text-[10px]">
-                              {p.category}
-                            </span>
-                            <div className="text-[10px] text-zinc-500 mt-0.5">{p.brand || 'Umum'}</div>
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <span className="font-bold font-mono text-amber-400">
-                              {itemsInCarton} pcs
-                            </span>
-                            <span className="text-[10px] text-zinc-500 block">per Dus</span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-mono text-zinc-400">
-                            {((v.weightMl * itemsInCarton) / 1000).toFixed(1)} kg
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono text-zinc-400">
-                            Rp {cartonCost.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono font-bold text-amber-400 text-sm">
-                            Rp {wholesaleCartonPrice.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono text-zinc-500 line-through">
-                            Rp {retailTotal.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold text-[10px]">
-                              Hemat Rp {savingsAmount.toLocaleString('id-ID')} ({savingsPercent}%)
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-mono">
-                            <span
-                              className={`px-2 py-0.5 rounded-full font-bold text-xs ${
-                                stockCartons > 5
-                                  ? 'bg-emerald-500/15 text-emerald-400'
-                                  : 'bg-rose-500/15 text-rose-400'
-                              }`}
-                            >
-                              {stockCartons} Dus
-                            </span>
-                            <span className="text-[10px] text-zinc-500 block">
-                              ({p.totalStock} pcs fisik)
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => {
-                                setEditingGroup(p);
-                                showToast(`Edit paket "${p.name}"`);
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition cursor-pointer"
-                            >
-                              Ubah Paket
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <ProductBundlesModule currencyMode={currencyMode} />
         </div>
       )}
 
@@ -1756,10 +1956,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
               </div>
 
               <button
-                onClick={() => {
-                  showToast('Kategori baru siap diisi saat Tambah Produk');
-                  setViewMode('add_product');
-                }}
+                onClick={() => setIsAddCategoryModalOpen(true)}
                 className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-sm transition cursor-pointer"
               >
                 + Tambah Kategori
@@ -1778,6 +1975,7 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                 { key: 'DAIRY', name: 'Susu & Olahan Susu', icon: '🥛', color: 'from-indigo-600/20 to-blue-600/20', border: 'border-indigo-500/30' },
                 { key: 'INSTANT_FOOD', name: 'Mie Instan & Cepat Saji', icon: '🍜', color: 'from-yellow-600/20 to-amber-600/20', border: 'border-yellow-500/30' },
                 { key: 'OTHER', name: 'Kategori Lainnya', icon: '📦', color: 'from-zinc-700/20 to-zinc-800/20', border: 'border-zinc-700/30' },
+                ...customCategories,
               ].map((cat) => {
                 const countSku = products.filter((p) => p.category.toUpperCase().includes(cat.key)).length;
                 const totalStock = products
@@ -1893,321 +2091,12 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
       {/* ========================================================================= */}
       {/* 4. TAB: HARGA DISKON (Matriks Diskon Grosir, PWA Member & Simulasi Margin) */}
       {/* ========================================================================= */}
+      {/* ========================================================================= */}
+      {/* 4. TAB: HARGA DISKON (Discount Pricing Directory & Add Form)              */}
+      {/* ========================================================================= */}
       {activeTab === 'harga_diskon' && (
         <div className="space-y-6 animate-in fade-in">
-          {/* Top Banner KPI */}
-          <div
-            className={`rounded-2xl p-6 border shadow-sm transition-colors ${
-              isDark ? 'bg-zinc-900/95 border-zinc-800 text-zinc-200' : 'bg-white border-slate-200 text-slate-800'
-            }`}
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4 border-zinc-800/40">
-              <div>
-                <h3 className="text-base font-bold flex items-center gap-2">
-                  <Percent className="w-5 h-5 text-emerald-400" />
-                  <span>Pengaturan Harga Diskon &amp; Matriks Promo</span>
-                </h3>
-                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
-                  Kelola potongan harga khusus grosir per dus, diskon member PWA otomatis (5%), dan simulasi margin kasir.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-xs flex items-center gap-1.5">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Promo Otomatis Aktif</span>
-                </span>
-              </div>
-            </div>
-
-            {/* 3 Active Discount Pillars */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-4 text-xs">
-              <div
-                className={`p-4 rounded-xl border ${
-                  isDark ? 'bg-purple-950/20 border-purple-800/40 text-purple-200' : 'bg-purple-50 border-purple-200 text-purple-900'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm">Diskon Member PWA</span>
-                  <span className="px-2 py-0.5 rounded-full bg-purple-500 text-white font-black text-[10px]">5% OFF</span>
-                </div>
-                <p className="text-[11px] opacity-80 leading-relaxed">
-                  Semua transaksi melalui Client PWA dengan nomor handphone terdaftar otomatis mendapatkan potongan harga 5%.
-                </p>
-              </div>
-
-              <div
-                className={`p-4 rounded-xl border ${
-                  isDark ? 'bg-amber-950/20 border-amber-800/40 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-900'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm">Diskon Grosir Karton</span>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-black text-[10px]">~10% Hemat</span>
-                </div>
-                <p className="text-[11px] opacity-80 leading-relaxed">
-                  Pembelian dalam jumlah dus/karton mendapatkan harga grosir langsung lebih murah dibanding membeli satuan eceran.
-                </p>
-              </div>
-
-              <div
-                className={`p-4 rounded-xl border ${
-                  isDark ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-200' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm">Proteksi Margin Toko</span>
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-zinc-950 font-black text-[10px]">&gt; 18% Aman</span>
-                </div>
-                <p className="text-[11px] opacity-80 leading-relaxed">
-                  Sistem otomatis menjaga harga jual promo agar tidak pernah berada di bawah harga modal (COGS).
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Interactive Pricing Matrix Table */}
-          <div
-            className={`rounded-2xl border shadow-sm overflow-hidden transition-colors ${
-              isDark ? 'bg-zinc-900/95 border-zinc-800' : 'bg-white border-slate-200'
-            }`}
-          >
-            <div className="p-4 border-b border-zinc-800/60 flex items-center justify-between text-xs">
-              <span className="font-bold text-white flex items-center gap-2">
-                <Percent className="w-4 h-4 text-emerald-400" />
-                Matriks Komparasi Harga Normal vs Diskon Member &amp; Grosir
-              </span>
-              <span className="text-[11px] text-zinc-400">Sinkron dengan Database POS</span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr
-                    className={`font-bold uppercase text-[10px] tracking-wider border-b whitespace-nowrap ${
-                      isDark ? 'bg-zinc-950/70 text-zinc-400 border-zinc-800' : 'bg-slate-50 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    <th className="py-3 px-4">Nama Produk &amp; SKU</th>
-                    <th className="py-3 px-3 text-right">Modal HPP (Rp)</th>
-                    <th className="py-3 px-3 text-right">Harga Normal POS</th>
-                    <th className="py-3 px-3 text-right">Harga Member PWA (-5%)</th>
-                    <th className="py-3 px-3 text-right">Harga Grosir Dus</th>
-                    <th className="py-3 px-3 text-center">Diskon Hemat Dus</th>
-                    <th className="py-3 px-3 text-center">Margin Laba Toko</th>
-                    <th className="py-3 px-4 text-center">Status Promo</th>
-                  </tr>
-                </thead>
-                <tbody className={`divide-y ${isDark ? 'divide-zinc-800/80 text-zinc-200' : 'divide-slate-100 text-slate-800'}`}>
-                  {products.slice(0, 8).map((p) => {
-                    const v = p.variants?.[0] || {
-                      costPrice: 20000,
-                      sellPrice: 25000,
-                      pwaPrice: 23750,
-                      itemsPerCarton: 24,
-                    };
-                    const itemsInCarton = v.itemsPerCarton || 24;
-                    const retailTotal = v.sellPrice * itemsInCarton;
-                    const wholesaleCarton = Math.round((retailTotal * 0.9) / 1000) * 1000;
-                    const pwaDiscounted = Math.round(v.sellPrice * 0.95);
-                    const marginPercent = v.sellPrice > 0 ? (((v.sellPrice - v.costPrice) / v.sellPrice) * 100).toFixed(1) : '0';
-
-                    return (
-                      <tr key={p.id} className="hover:bg-zinc-800/20 transition-colors">
-                        <td className="py-3 px-4">
-                          <span className="font-bold text-white block">{p.name}</span>
-                          <span className="text-[10px] text-zinc-500 font-mono">SKU: {p.sku}</span>
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-zinc-400">
-                          Rp {v.costPrice.toLocaleString('id-ID')}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-white">
-                          Rp {v.sellPrice.toLocaleString('id-ID')}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-purple-400">
-                          Rp {pwaDiscounted.toLocaleString('id-ID')}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-amber-400">
-                          Rp {wholesaleCarton.toLocaleString('id-ID')}
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold text-[10px]">
-                            Hemat 10% / Dus
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono font-bold text-emerald-400">
-                          {marginPercent}%
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
-                            Aktif
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Real-time Discount Simulator for Cashier/Manager */}
-          <div
-            className={`rounded-2xl p-6 border shadow-sm space-y-4 transition-colors ${
-              isDark ? 'bg-zinc-900/95 border-zinc-800 text-zinc-200' : 'bg-white border-slate-200 text-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between border-b pb-3 border-zinc-800/40">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-emerald-400" />
-                <h4 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Simulasi &amp; Kalkulator Diskon Kasir Real-Time
-                </h4>
-              </div>
-              <span className="text-[11px] text-zinc-400">Uji coba simulasi checkout berdiskon</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-400 mb-1.5">Pilih Produk:</label>
-                <select
-                  value={simProductSku}
-                  onChange={(e) => setSimProductSku(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl border text-xs font-semibold ${
-                    isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.sku}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-400 mb-1.5">Jumlah Pembelian:</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={simQty}
-                  onChange={(e) => setSimQty(Math.max(1, Number(e.target.value)))}
-                  className={`w-full px-3 py-2 rounded-xl border text-xs font-mono font-bold ${
-                    isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-400 mb-1.5">Kemasan:</label>
-                <select
-                  value={simUnitType}
-                  onChange={(e) => setSimUnitType(e.target.value as any)}
-                  className={`w-full px-3 py-2 rounded-xl border text-xs font-semibold ${
-                    isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                >
-                  <option value="carton">Dus / Karton (Diskon Grosir)</option>
-                  <option value="unit">Satuan Pcs (Harga Eceran)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-400 mb-1.5">Tipe Pelanggan:</label>
-                <select
-                  value={simCustomerType}
-                  onChange={(e) => setSimCustomerType(e.target.value as any)}
-                  className={`w-full px-3 py-2 rounded-xl border text-xs font-semibold ${
-                    isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'
-                  }`}
-                >
-                  <option value="pwa_member">Member VIP PWA (Diskon 5%)</option>
-                  <option value="regular">Pelanggan Umum (Tanpa Member)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Live Calculation Output Card */}
-            {(() => {
-              const selectedP = products.find((p) => p.sku === simProductSku) || products[0];
-              const v = selectedP?.variants?.[0] || {
-                costPrice: 20000,
-                sellPrice: 25000,
-                itemsPerCarton: 24,
-              };
-
-              const itemsInCarton = v.itemsPerCarton || 24;
-              const unitPrice = v.sellPrice;
-              const regularTotal =
-                simUnitType === 'carton' ? unitPrice * itemsInCarton * simQty : unitPrice * simQty;
-
-              const cogsTotal =
-                simUnitType === 'carton' ? v.costPrice * itemsInCarton * simQty : v.costPrice * simQty;
-
-              // Discounts
-              const cartonDiscount =
-                simUnitType === 'carton' ? Math.round(regularTotal * 0.1) : 0; // 10% wholesale discount
-              const afterCarton = regularTotal - cartonDiscount;
-
-              const memberDiscount =
-                simCustomerType === 'pwa_member' ? Math.round(afterCarton * 0.05) : 0; // 5% member discount
-
-              const finalTotal = afterCarton - memberDiscount;
-              const totalDiscountGiven = cartonDiscount + memberDiscount;
-              const netProfit = finalTotal - cogsTotal;
-              const profitMargin = finalTotal > 0 ? ((netProfit / finalTotal) * 100).toFixed(1) : '0';
-
-              return (
-                <div
-                  className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                    isDark ? 'bg-zinc-950/80 border-emerald-900/50' : 'bg-emerald-50/70 border-emerald-200'
-                  }`}
-                >
-                  <div className="space-y-1">
-                    <span className="text-xs text-zinc-400">Hasil Simulasi Tagihan:</span>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-black font-mono text-emerald-400">
-                        Rp {finalTotal.toLocaleString('id-ID')}
-                      </span>
-                      {totalDiscountGiven > 0 && (
-                        <span className="text-xs text-zinc-500 line-through font-mono">
-                          Rp {regularTotal.toLocaleString('id-ID')}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-zinc-400">
-                      Diskon yang didapat pembeli:{' '}
-                      <span className="text-emerald-400 font-bold">
-                        Rp {totalDiscountGiven.toLocaleString('id-ID')}
-                      </span>{' '}
-                      {simUnitType === 'carton' && '(Grosir Dus)'}{' '}
-                      {simCustomerType === 'pwa_member' && '+ (Member 5%)'}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-6 border-t md:border-t-0 md:border-l border-zinc-800/80 pt-3 md:pt-0 md:pl-6 text-xs">
-                    <div>
-                      <span className="text-zinc-500 block text-[10px]">Total Modal Toko (COGS)</span>
-                      <span className="font-mono font-bold text-white">
-                        Rp {cogsTotal.toLocaleString('id-ID')}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500 block text-[10px]">Laba Bersih Toko</span>
-                      <span className="font-mono font-bold text-emerald-400">
-                        Rp {netProfit.toLocaleString('id-ID')}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500 block text-[10px]">Margin Bersih</span>
-                      <span className="font-mono font-bold text-amber-400">{profitMargin}%</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+          <DiscountPricingModule currencyMode={currencyMode} />
         </div>
       )}
 
@@ -2792,6 +2681,921 @@ export const ProductCartonManager: React.FC<ProductCartonManagerProps> = ({
                   className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md shadow-blue-500/20 cursor-pointer"
                 >
                   Save Product
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: UBAH PAKET & EDIT DETAIL PRODUK                                    */}
+      {/* ========================================================================= */}
+      {editingGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in">
+          <div
+            className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl space-y-4 my-8 text-xs ${
+              isDark
+                ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            {/* Modal Header */}
+            <div
+              className={`flex items-center justify-between border-b pb-3 ${
+                isDark ? 'border-zinc-800' : 'border-slate-100'
+              }`}
+            >
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Package className="w-5 h-5 text-amber-400" />
+                  <span>Ubah Paket &amp; Detail Produk</span>
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                  Perubahan harga dus, isi satuan, modal HPP, dan stok otomatis tersinkronisasi ke POS Terminal Kasir dan PWA Pelanggan.
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingGroup(null)}
+                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                  isDark
+                    ? 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditProduct} className="space-y-4">
+              {/* Row 1: Nama Produk & SKU */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Nama Produk / Paket *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editingGroup.name}
+                    onChange={(e) => setEditingGroup({ ...editingGroup, name: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border font-semibold transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    SKU Produk
+                  </label>
+                  <input
+                    type="text"
+                    value={editingGroup.sku || ''}
+                    onChange={(e) => setEditingGroup({ ...editingGroup, sku: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border font-mono transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {/* Row 2: Kategori & Brand */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Kategori Produk
+                  </label>
+                  <select
+                    value={editingGroup.category}
+                    onChange={(e) => setEditingGroup({ ...editingGroup, category: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  >
+                    <option value="MINERAL">MINERAL (Air Mineral & Galon)</option>
+                    <option value="FLAVORED">FLAVORED (Minuman Berperisa & Teh)</option>
+                    <option value="COLA">COLA (Minuman Soda & Kola)</option>
+                    <option value="GAS">GAS (LPG 3Kg & Melon)</option>
+                    <option value="COFFEE">COFFEE (Kopi Ready-to-drink)</option>
+                    <option value="SNACK">SNACK (Makanan Ringan)</option>
+                    <option value="DAIRY">DAIRY (Susu & Olahan Susu)</option>
+                    <option value="INSTANT_FOOD">INSTANT FOOD (Mie Instan)</option>
+                    <option value="OTHER">OTHER (Kategori Lainnya)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Merek / Brand
+                  </label>
+                  <input
+                    type="text"
+                    value={editingGroup.brand || ''}
+                    onChange={(e) => setEditingGroup({ ...editingGroup, brand: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Konfigurasi Paket Dus */}
+              <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+                <div className="font-bold text-amber-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Boxes className="w-4 h-4 text-amber-400" />
+                    Konfigurasi Dus / Karton &amp; Grosir
+                  </span>
+                  <span className="text-[10px] text-zinc-400">
+                    Otomatis hitung diskon grosir &amp; hemat pembeli
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Isi Satuan (Pcs/Dus)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editingGroup.itemsPerCarton || 24}
+                      onChange={(e) =>
+                        setEditingGroup({
+                          ...editingGroup,
+                          itemsPerCarton: Math.max(1, Number(e.target.value)),
+                        })
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-700 bg-zinc-950 text-white font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Berat Satuan (ml/gr)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editingGroup.weightMl || 600}
+                      onChange={(e) =>
+                        setEditingGroup({
+                          ...editingGroup,
+                          weightMl: Number(e.target.value),
+                        })
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-700 bg-zinc-950 text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Berat per Dus
+                    </label>
+                    <div className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 font-mono font-bold">
+                      {(
+                        ((editingGroup.weightMl || 600) * (editingGroup.itemsPerCarton || 24)) /
+                        1000
+                      ).toFixed(1)}{' '}
+                      kg
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Stok Dus Gudang
+                    </label>
+                    <div className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 text-emerald-400 font-mono font-bold">
+                      {Math.floor(editingGroup.totalStock / (editingGroup.itemsPerCarton || 24))} Dus
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 4: Harga & Modal */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Modal HPP Satuan (Rp) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={editingGroup.costPrice || 0}
+                    onChange={(e) =>
+                      setEditingGroup({ ...editingGroup, costPrice: Number(e.target.value) })
+                    }
+                    className={`w-full px-3 py-2 rounded-lg border font-mono transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                  <span className="text-[10px] text-zinc-500 mt-0.5 block">
+                    {language === 'en' ? 'Box Cost: ' : 'Modal Dus: '}
+                    {formatCurrency(
+                      (editingGroup.costPrice || 0) * (editingGroup.itemsPerCarton || 24)
+                    )}
+                  </span>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    {currencyMode === 'USD'
+                      ? 'Standard Retail Price ($) *'
+                      : 'Harga Jual Eceran Satuan (Rp) *'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={editingGroup.posPrice || editingGroup.sellPrice || 0}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setEditingGroup({ ...editingGroup, posPrice: val, sellPrice: val });
+                    }}
+                    className={`w-full px-3 py-2 rounded-lg border font-mono font-bold text-amber-400 transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950' : 'border-slate-200 bg-slate-50'
+                    }`}
+                  />
+                  <span className="text-[10px] text-zinc-500 mt-0.5 block">
+                    {language === 'en' ? 'Box Retail Value: ' : 'Nilai Eceran Satuan Dus: '}
+                    {formatCurrency(
+                      (editingGroup.posPrice || editingGroup.sellPrice || 0) *
+                      (editingGroup.itemsPerCarton || 24)
+                    )}
+                  </span>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    {currencyMode === 'USD'
+                      ? 'PWA Member / Wholesale Price ($)'
+                      : 'Harga Member PWA / Grosir (Rp)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editingGroup.pwaPrice || editingGroup.sellPrice || 0}
+                    onChange={(e) =>
+                      setEditingGroup({ ...editingGroup, pwaPrice: Number(e.target.value) })
+                    }
+                    className={`w-full px-3 py-2 rounded-lg border font-mono transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                  <span className="text-[10px] text-emerald-400 mt-0.5 block">
+                    {language === 'en' ? 'Box Wholesale Price (~10% Off): ' : 'Harga Grosir Dus (~10% Off): '}
+                    {formatCurrency(
+                      Math.round(
+                        (((editingGroup.posPrice || editingGroup.sellPrice || 0) *
+                          (editingGroup.itemsPerCarton || 24) *
+                          0.9) /
+                          1000)
+                      ) * 1000
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {/* Row 5: Total Stok Fisik & Channel Toggles */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Total Stok Fisik (Pcs) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={editingGroup.totalStock}
+                    onChange={(e) =>
+                      setEditingGroup({
+                        ...editingGroup,
+                        totalStock: Math.max(0, Number(e.target.value)),
+                      })
+                    }
+                    className={`w-full px-3 py-2 rounded-lg border font-mono font-bold transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Ketersediaan Channel
+                  </label>
+                  <div className="flex items-center gap-4 py-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={editingGroup.isActive !== false}
+                        onChange={(e) =>
+                          setEditingGroup({ ...editingGroup, isActive: e.target.checked })
+                        }
+                        className="rounded border-zinc-700 bg-zinc-950 text-amber-500 focus:ring-amber-400"
+                      />
+                      <span>Status Aktif</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={editingGroup.isPosVisible !== false}
+                        onChange={(e) =>
+                          setEditingGroup({ ...editingGroup, isPosVisible: e.target.checked })
+                        }
+                        className="rounded border-zinc-700 bg-zinc-950 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Tampil di POS</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={editingGroup.isPwaVisible !== false}
+                        onChange={(e) =>
+                          setEditingGroup({ ...editingGroup, isPwaVisible: e.target.checked })
+                        }
+                        className="rounded border-zinc-700 bg-zinc-950 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Tampil di PWA</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div
+                className={`flex items-center justify-between pt-4 border-t ${
+                  isDark ? 'border-zinc-800' : 'border-slate-100'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Hapus produk "${editingGroup.name}" dari sistem?`)) {
+                      handleDeleteProduct(editingGroup.id);
+                      setEditingGroup(null);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-semibold text-xs border border-rose-500/30 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus Produk</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingGroup(null)}
+                    className={`px-4 py-2 rounded-xl font-semibold cursor-pointer ${
+                      isDark
+                        ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold shadow-md shadow-amber-500/20 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Simpan Perubahan Paket</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: STOCK ADJUSTMENT (PENYESUAIAN STOK FISIK)                          */}
+      {/* ========================================================================= */}
+      {adjustingStockGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-4 text-xs ${
+              isDark
+                ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div
+              className={`flex items-center justify-between border-b pb-3 ${
+                isDark ? 'border-zinc-800' : 'border-slate-100'
+              }`}
+            >
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Package className="w-5 h-5 text-blue-500" />
+                  <span>Penyesuaian Stok Fisik</span>
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                  {adjustingStockGroup.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setAdjustingStockGroup(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 flex items-center justify-between">
+                <span className="text-zinc-400">Stok Sistem Saat Ini:</span>
+                <span className="font-mono font-bold text-base text-emerald-400">
+                  {adjustingStockGroup.totalStock} pcs
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                  Alasan Penyesuaian Stok *
+                </label>
+                <input
+                  type="text"
+                  value={stockAdjustReason}
+                  onChange={(e) => setStockAdjustReason(e.target.value)}
+                  placeholder="Contoh: Stok Opname Fisik, Barang Rusak, Koreksi Kasir"
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-300 mb-1.5">
+                  Pilih Cepat Penyesuaian (+/−)
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[-10, -5, 5, 10].map((delta) => (
+                    <button
+                      key={delta}
+                      type="button"
+                      onClick={() => {
+                        handleSaveStockAdjustment(delta, stockAdjustReason);
+                      }}
+                      className={`py-2 rounded-xl font-mono font-bold cursor-pointer transition ${
+                        delta > 0
+                          ? 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white border border-emerald-500/30'
+                          : 'bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white border border-rose-500/30'
+                      }`}
+                    >
+                      {delta > 0 ? `+${delta}` : delta}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                  Atau Masukkan Perubahan Jumlah (Delta)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={stockAdjustQty}
+                    onChange={(e) => setStockAdjustQty(Number(e.target.value))}
+                    placeholder="Contoh: 15 atau -5"
+                    className="flex-1 px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSaveStockAdjustment(stockAdjustQty, stockAdjustReason);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold cursor-pointer"
+                  >
+                    Terapkan
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: BUAT PAKET DUS BARU                                                */}
+      {/* ========================================================================= */}
+      {isPackageModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div
+            className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl space-y-4 text-xs ${
+              isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-100' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className={`flex items-center justify-between border-b pb-3 ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-amber-500" />
+                  <span>Buat Paket Dus Baru</span>
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                  Atur rasio isi per karton dan harga jual grosir paket produk.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsPackageModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePackage} className="space-y-4">
+              <div>
+                <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                  Pilih Produk *
+                </label>
+                <select
+                  required
+                  value={selectedPackageSku}
+                  onChange={(e) => {
+                    const sku = e.target.value;
+                    setSelectedPackageSku(sku);
+                    const found = products.find(
+                      (p) => p.sku === sku || p.id === sku || (p.variants && p.variants.some((v) => v.sku === sku))
+                    );
+                    if (found) {
+                      const v = found.variants?.find((item) => item.sku === sku);
+                      setPackagePiecesPerCarton(v?.itemsPerCarton || found.itemsPerCarton || 24);
+                      setPackagePricePerCarton(found.sellPrice ? found.sellPrice * (found.itemsPerCarton || 24) : 0);
+                    }
+                  }}
+                  className={`w-full px-3 py-2 rounded-lg border font-semibold transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <option value="">-- Pilih Produk dari Katalog --</option>
+                  {products.flatMap((p) =>
+                    p.hasVariants && p.variants
+                      ? p.variants.map((v) => (
+                          <option key={v.sku} value={v.sku}>
+                            [{v.sku}] {v.name}
+                          </option>
+                        ))
+                      : [
+                          <option key={p.sku || p.id} value={p.sku || p.id}>
+                            [{p.sku || p.id}] {p.name}
+                          </option>,
+                        ]
+                  )}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Isi Satuan per Dus (Pieces) *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={packagePiecesPerCarton}
+                    onChange={(e) => setPackagePiecesPerCarton(Math.max(1, Number(e.target.value)))}
+                    className={`w-full px-3 py-2 rounded-lg border font-mono font-bold transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                  <span className="text-[10px] text-zinc-400 mt-0.5 block">Contoh: 12, 24, 40 pcs/dus</span>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    Harga Jual per Dus / Karton (Rp) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={packagePricePerCarton}
+                    onChange={(e) => setPackagePricePerCarton(Math.max(0, Number(e.target.value)))}
+                    className={`w-full px-3 py-2 rounded-lg border font-mono font-bold text-amber-400 transition focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                      isDark ? 'border-zinc-700 bg-zinc-950' : 'border-slate-200 bg-slate-50'
+                    }`}
+                  />
+                  <span className="text-[10px] text-zinc-400 mt-0.5 block">Harga grosir 1 dus utuh</span>
+                </div>
+              </div>
+
+              <div className={`flex items-center justify-end gap-2 pt-4 border-t ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+                <button
+                  type="button"
+                  onClick={() => setIsPackageModalOpen(false)}
+                  className={`px-4 py-2 rounded-xl font-semibold cursor-pointer ${
+                    isDark ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold shadow-md shadow-amber-500/20 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Simpan Paket Dus</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: TAMBAH KATEGORI PRODUK                                             */}
+      {/* ========================================================================= */}
+      {isAddCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-4 text-xs ${
+              isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-100' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className={`flex items-center justify-between border-b pb-3 ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Tag className="w-5 h-5 text-purple-400" />
+                  <span>Tambah Kategori Produk</span>
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                  Tambahkan kategori baru yang otomatis tersimpan ke Firestore `categories`.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAddCategoryModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCategory} className="space-y-4">
+              <div>
+                <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                  Nama Kategori *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Frozen Food, Roti & Kue, Rokok"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border font-semibold transition focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                    isDark ? 'border-zinc-700 bg-zinc-950 text-zinc-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                  Ikon Emoji
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newCategoryIcon}
+                    onChange={(e) => setNewCategoryIcon(e.target.value)}
+                    className={`w-16 text-center text-xl px-2 py-1.5 rounded-lg border transition ${
+                      isDark ? 'border-zinc-700 bg-zinc-950 text-white' : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {['🧊', '🥐', '🍫', '🍹', '🧴', '🧼', '📦', '🥫', '🍚', '🍞'].map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setNewCategoryIcon(emoji)}
+                        className={`w-8 h-8 rounded-lg border text-sm flex items-center justify-center transition cursor-pointer ${
+                          newCategoryIcon === emoji
+                            ? 'border-purple-500 bg-purple-500/20'
+                            : 'border-zinc-800 hover:bg-zinc-800'
+                        }`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`flex items-center justify-end gap-2 pt-4 border-t ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddCategoryModalOpen(false)}
+                  className={`px-4 py-2 rounded-xl font-semibold cursor-pointer ${
+                    isDark ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold shadow-md shadow-purple-500/20 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Simpan Kategori</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: RECORD STOCK IN (INBOUND SUPPLY)                                   */}
+      {/* ========================================================================= */}
+      {isStockInModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div
+            className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl space-y-4 text-xs ${
+              isDark
+                ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div
+              className={`flex items-center justify-between border-b pb-3 ${
+                isDark ? 'border-zinc-800' : 'border-slate-100'
+              }`}
+            >
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <ArrowDownLeft className="w-5 h-5 text-emerald-400" />
+                  <span>Penerimaan Barang Masuk (Stock In)</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Catat pengiriman dus dari distributor dan tambah stok gudang secara otomatis.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsStockInModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRecordStockIn} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                  Pilih Produk Masuk *
+                </label>
+                <select
+                  value={stockInForm.productName}
+                  onChange={(e) => setStockInForm({ ...stockInForm, productName: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white"
+                >
+                  {products.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name} (Stok: {p.totalStock} pcs)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                    Jumlah Karton / Dus Masuk *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={stockInForm.qty}
+                    onChange={(e) => setStockInForm({ ...stockInForm, qty: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                    Pemasok / Distributor *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={stockInForm.supplier}
+                    onChange={(e) => setStockInForm({ ...stockInForm, supplier: e.target.value })}
+                    placeholder="e.g. PT Tirta Distribusi Jaya"
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setIsStockInModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold cursor-pointer"
+                >
+                  Simpan Barang Masuk
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: RECORD STOCK OUT (OUTBOUND DISPATCH)                               */}
+      {/* ========================================================================= */}
+      {isStockOutModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div
+            className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl space-y-4 text-xs ${
+              isDark
+                ? 'bg-zinc-900 border-zinc-800 text-zinc-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div
+              className={`flex items-center justify-between border-b pb-3 ${
+                isDark ? 'border-zinc-800' : 'border-slate-100'
+              }`}
+            >
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <ArrowUpRight className="w-5 h-5 text-amber-400" />
+                  <span>Pengeluaran Stok (Stock Out)</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Catat pengeluaran stok untuk kasir POS, order grosir, atau retur barang.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsStockOutModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRecordStockOut} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                  Pilih Produk Dikeluarkan *
+                </label>
+                <select
+                  value={stockOutForm.productName}
+                  onChange={(e) => setStockOutForm({ ...stockOutForm, productName: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white"
+                >
+                  {products.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name} (Stok: {p.totalStock} pcs)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                    Jumlah Unit / Dus Keluar *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={stockOutForm.qty}
+                    onChange={(e) => setStockOutForm({ ...stockOutForm, qty: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                    Tujuan Pengeluaran *
+                  </label>
+                  <select
+                    value={stockOutForm.dest}
+                    onChange={(e) => setStockOutForm({ ...stockOutForm, dest: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-950 text-white"
+                  >
+                    <option value="Store POS Sales">Store POS Sales</option>
+                    <option value="PWA Client Wholesale">PWA Client Wholesale</option>
+                    <option value="Transfer Antar Gudang">Transfer Antar Gudang</option>
+                    <option value="Barang Rusak / Kadaluarsa">Barang Rusak / Kadaluarsa</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setIsStockOutModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold cursor-pointer"
+                >
+                  Simpan Pengeluaran
                 </button>
               </div>
             </form>

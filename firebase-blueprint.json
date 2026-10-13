@@ -122,12 +122,45 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Recommendation generation date" }
       },
       "required": ["id", "storeId", "productId", "suggestedCartons", "urgency"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Omnichannel customer order with fulfillment progress and delivery courier tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Order identifier" },
+        "storeId": { "type": "string", "description": "Associated store identifier" },
+        "orderNumber": { "type": "string", "description": "Display order reference number (e.g. NL-3062)", "maxLength": 50 },
+        "customerName": { "type": "string", "description": "Customer recipient name", "maxLength": 100 },
+        "customerPhone": { "type": "string", "description": "Customer contact or WhatsApp number", "maxLength": 30 },
+        "customerAddress": { "type": "string", "description": "Delivery destination address", "maxLength": 300 },
+        "channel": { "type": "string", "enum": ["visitor", "pwa", "website"], "description": "Order purchase channel" },
+        "itemsCount": { "type": "number", "description": "Total quantity of items in the order" },
+        "totalCost": { "type": "number", "description": "Total wholesale COGS cost" },
+        "totalAmount": { "type": "number", "description": "Total gross customer selling price" },
+        "totalProfit": { "type": "number", "description": "Calculated net profit margin" },
+        "status": { "type": "string", "enum": ["new", "packing", "shipped", "delivered", "returned", "cancelled"], "description": "Order fulfillment lifecycle status" },
+        "paymentMethod": { "type": "string", "description": "Payment method utilized", "maxLength": 50 },
+        "paymentStatus": { "type": "string", "enum": ["paid", "unpaid", "pending"], "description": "Payment settlement status" },
+        "deliveryStaffId": { "type": "string", "description": "Assigned courier delivery staff ID", "maxLength": 60 },
+        "deliveryStaffName": { "type": "string", "description": "Assigned courier delivery staff name", "maxLength": 100 },
+        "deliveryStaffPhone": { "type": "string", "description": "Assigned courier contact phone", "maxLength": 30 },
+        "assignedAt": { "type": "string", "format": "date-time", "description": "Courier assignment timestamp" },
+        "notes": { "type": "string", "description": "Special delivery notes or instructions", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Order creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Order modification timestamp" }
+      },
+      "required": ["id", "orderNumber", "customerName", "channel", "totalAmount", "status"]
     }
   },
   "firestore": {
     "/stores/{storeId}": {
       "schema": { "$ref": "#/entities/Store" },
       "description": "Store configurations and GPS anti-fraud reference points"
+    },
+    "/stores/{storeId}/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Omnichannel customer orders with Wharf processing workflow and courier assignment"
     },
     "/products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },

@@ -396,14 +396,39 @@ export const ClientPwaApp: React.FC = () => {
 
   useEffect(() => {
     const targetPhoneNorm = normalizePhone(member.phone);
-    const q = query(
+    let txOrders: Transaction[] = [];
+    let storeOrders: Transaction[] = [];
+
+    const updateCombined = () => {
+      const map = new Map<string, Transaction>();
+      [...storeOrders, ...txOrders].forEach((item) => {
+        map.set(item.id, item);
+      });
+      const combined = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+      );
+      setUserOrders(combined);
+
+      // Calculate active orders (pending_approval, pending, processing, ready)
+      const active = combined.filter(
+        (o) =>
+          o.status !== 'completed' &&
+          o.status !== 'rejected' &&
+          o.status !== 'refunded' &&
+          o.fulfillmentStatus !== 'completed'
+      );
+      setActiveOrdersCount(active.length);
+      setLatestActiveOrder(active.length > 0 ? active[0] : null);
+    };
+
+    const qTx = query(
       collection(db, 'transactions'),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
 
-    const unsubscribe = onSnapshot(
-      q,
+    const unsubTx = onSnapshot(
+      qTx,
       (snapshot) => {
         const matching: Transaction[] = [];
         snapshot.forEach((docSnap) => {
@@ -418,26 +443,62 @@ export const ClientPwaApp: React.FC = () => {
             }
           }
         });
-
-        setUserOrders(matching);
-
-        // Calculate active orders (pending_approval, pending, processing, ready)
-        const active = matching.filter(
-          (o) =>
-            o.status !== 'completed' &&
-            o.status !== 'rejected' &&
-            o.status !== 'refunded' &&
-            o.fulfillmentStatus !== 'completed'
-        );
-        setActiveOrdersCount(active.length);
-        setLatestActiveOrder(active.length > 0 ? active[0] : null);
+        txOrders = matching;
+        updateCombined();
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, 'transactions');
       }
     );
 
-    return () => unsubscribe();
+    const qOrders = query(
+      collection(db, 'stores/store_001/orders'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubOrders = onSnapshot(
+      qOrders,
+      (snapshot) => {
+        const matching: Transaction[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const phone = data.customerPhone || data.deliveryDetails?.phone || '';
+          const normPhone = normalizePhone(phone);
+          if (viewAllDemoOrders || !targetPhoneNorm || normPhone === targetPhoneNorm) {
+            matching.push({
+              id: docSnap.id,
+              storeId: data.storeId || 'store_001',
+              outletId: data.outletId || 'out_1',
+              channel: 'pwa_client',
+              customerName: data.customerName || data.deliveryDetails?.recipientName || 'Member PWA',
+              customerPhone: phone,
+              totalAmount: data.totalAmount || 0,
+              totalCost: data.totalCost || Math.round((data.totalAmount || 0) * 0.7),
+              paymentMethod: data.paymentMethod || 'qris',
+              status: data.status || 'pending_approval',
+              fulfillmentStatus: data.fulfillmentStatus || 'pending',
+              fraudScore: data.fraudScore || 8,
+              fraudFlags: data.fraudFlags || ['PWA_VERIFIED_MEMBER'],
+              riskLevel: data.riskLevel || 'clean',
+              items: data.items || [],
+              createdAt: data.createdAt || data.timestamp || new Date().toISOString(),
+              aiExplanation: data.aiExplanation || '',
+            });
+          }
+        });
+        storeOrders = matching;
+        updateCombined();
+      },
+      (error) => {
+        console.warn('stores/store_001/orders onSnapshot error:', error);
+      }
+    );
+
+    return () => {
+      unsubTx();
+      unsubOrders();
+    };
   }, [member.phone, viewAllDemoOrders]);
 
   // Subscribe to real-time products
@@ -909,8 +970,62 @@ export const ClientPwaApp: React.FC = () => {
         };
       });
 
+      const nowTimestamp = new Date().toISOString();
+
+      const deliveryDetails = {
+        recipientName: member.name || 'Member PWA Terdaftar',
+        customerName: member.name || 'Member PWA Terdaftar',
+        phone: member.phone || '',
+        customerPhone: member.phone || '',
+        address: member.address || '',
+        notes: member.addressNotes || '',
+        addressNotes: member.addressNotes || '',
+        businessType: member.businessType || '',
+        latitude: member.latitude || DEFAULT_STORE_CONFIG.latitude,
+        longitude: member.longitude || DEFAULT_STORE_CONFIG.longitude,
+        accuracy: member.accuracy || 5,
+        distanceToStoreMeters:
+          member.latitude && member.longitude
+            ? calculateDistanceToStore(member.latitude, member.longitude)
+            : 18,
+      };
+
+      const orderPayload = {
+        storeId: 'store_001',
+        outletId: 'out_1',
+        channel: 'pwa_client',
+        customerName: member.name || 'Member PWA Terdaftar',
+        customerPhone: member.phone || '',
+        cartItems: cart,
+        items: txItems,
+        totalAmount: totalPayable,
+        subtotal: cartSubtotal,
+        deliveryFee: deliveryFee,
+        memberDiscount: memberDiscount,
+        paymentMethod: paymentMethod === 'qris' ? 'qris' : paymentMethod === 'cod' ? 'cash' : 'bank_transfer',
+        status: 'pending_approval',
+        fulfillmentStatus: 'pending',
+        deliveryDetails,
+        deliveryAddress: member.address || '',
+        addressNotes: member.addressNotes || '',
+        timestamp: nowTimestamp,
+        createdAt: nowTimestamp,
+      };
+
+      let finalTxId = `TRX-PWA-${Date.now().toString().slice(-6)}`;
+
+      // 1. Direct write to 'stores/store_001/orders' using addDoc
+      try {
+        const orderDocRef = await addDoc(collection(db, 'stores/store_001/orders'), orderPayload);
+        finalTxId = orderDocRef.id;
+      } catch (orderErr) {
+        console.warn('Firestore stores/store_001/orders save fallback:', orderErr);
+      }
+
+      // 2. Also write to root transactions collection to maintain full system integration
       const txPayload: Omit<Transaction, 'id'> = {
-        storeId: DEMO_STORE_ID,
+        storeId: 'store_001',
+        outletId: 'out_1',
         channel: 'pwa_client',
         customerName: member.name || 'Member PWA Terdaftar',
         customerPhone: member.phone || '',
@@ -918,26 +1033,25 @@ export const ClientPwaApp: React.FC = () => {
         totalCost: Math.round(totalPayable * 0.7),
         paymentMethod: paymentMethod === 'qris' ? 'qris' : paymentMethod === 'cod' ? 'cash' : 'bank_transfer',
         status: 'pending_approval',
+        fulfillmentStatus: 'pending',
         fraudScore: 8,
         fraudFlags: ['PWA_VERIFIED_MEMBER', 'HIGH_ACCURACY_GPS', 'FONNTE_WHATSAPP_VERIFIED'],
         riskLevel: 'clean',
         customerLatitude: member.latitude || DEFAULT_STORE_CONFIG.latitude,
         customerLongitude: member.longitude || DEFAULT_STORE_CONFIG.longitude,
-        distanceToStoreMeters:
-          member.latitude && member.longitude
-            ? calculateDistanceToStore(member.latitude, member.longitude)
-            : 18,
+        distanceToStoreMeters: deliveryDetails.distanceToStoreMeters,
         gpsAccuracy: member.accuracy || 5,
         isMockGpsSuspected: false,
         aiExplanation: `Pesanan PWA Client dari ${member.name} (${cart.length} item) diverifikasi melalui WhatsApp Fonnte & koordinat GPS tervalidasi. Siap diproses sistem POS.`,
         items: txItems,
-        createdAt: new Date().toISOString(),
+        createdAt: nowTimestamp,
       };
 
-      let finalTxId = `TRX-PWA-${Date.now().toString().slice(-6)}`;
       try {
         const docRef = await addDoc(collection(db, 'transactions'), txPayload);
-        finalTxId = docRef.id;
+        if (!finalTxId.startsWith('ORD-')) {
+          finalTxId = docRef.id;
+        }
 
         // Save each item to items subcollection
         for (const item of txItems) {
@@ -2235,9 +2349,7 @@ export const ClientPwaApp: React.FC = () => {
               </button>
               <button
                 onClick={() => setCurrentScreen('order_history')}
-                className={`flex flex-col items-center relative transition cursor-pointer ${
-                  currentScreen === 'order_history' ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-white'
-                }`}
+                className="flex flex-col items-center relative transition cursor-pointer text-zinc-400 hover:text-white"
                 title={`Riwayat Pesanan (${userOrders.length} pesanan, ${activeOrdersCount} aktif)`}
               >
                 <div className="relative">

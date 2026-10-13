@@ -15,7 +15,9 @@ import {
   AlertTriangle,
   ArrowRight,
   TrendingUp,
+  X,
 } from 'lucide-react';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 
 interface ProcurementModuleProps {
   subModule:
@@ -28,6 +30,97 @@ interface ProcurementModuleProps {
   onNavigateTab?: (tab: string) => void;
 }
 
+const INITIAL_SUPPLIERS = [
+  {
+    id: 'sup_1',
+    name: 'PT Indofood CBP Sukses Makmur Tbk',
+    category: 'Sembako & Mie Instan',
+    contactPerson: 'Hendra Gunawan',
+    phone: '+62 811-2345-6789',
+    email: 'order.jakarta@indofood.co.id',
+    paymentTerms: 'Tempo 30 Hari',
+    leadTimeDays: 2,
+    totalOrders: 42,
+    rating: 4.9,
+    status: 'active',
+  },
+  {
+    id: 'sup_2',
+    name: 'PT Tirta Investama (Danone Aqua)',
+    category: 'Air Mineral & Minuman',
+    contactPerson: 'Suryadi Pratama',
+    phone: '+62 812-9876-5432',
+    email: 'distribusi.aqua@danone.com',
+    paymentTerms: 'Cash On Delivery (COD)',
+    leadTimeDays: 1,
+    totalOrders: 68,
+    rating: 4.8,
+    status: 'active',
+  },
+  {
+    id: 'sup_3',
+    name: 'PT Mayora Indah Tbk',
+    category: 'Biskuit & Kopi',
+    contactPerson: 'Dewi Lestari',
+    phone: '+62 813-5566-7788',
+    email: 'sales.dist@mayora.co.id',
+    paymentTerms: 'Tempo 14 Hari',
+    leadTimeDays: 3,
+    totalOrders: 27,
+    rating: 4.7,
+    status: 'active',
+  },
+  {
+    id: 'sup_4',
+    name: 'PT Unilever Indonesia Tbk',
+    category: 'Toiletries & Home Care',
+    contactPerson: 'Reza Fahlevi',
+    phone: '+62 815-1122-3344',
+    email: 'retail.id@unilever.com',
+    paymentTerms: 'Tempo 30 Hari',
+    leadTimeDays: 4,
+    totalOrders: 19,
+    rating: 4.6,
+    status: 'active',
+  },
+];
+
+const INITIAL_PURCHASE_REQUESTS = [
+  {
+    id: 'PR-202610-101',
+    date: '10 Okt 2026, 08:30 WIB',
+    requester: 'Ahmad Fauzi (Kasir Pusat)',
+    urgency: 'Tinggi (Stok Kritis)',
+    product: 'Aqua Galon 19L Refill',
+    requestedQty: '60 Galon',
+    estimatedCost: 1080000,
+    status: 'Disetujui Owner',
+    notes: 'Sisa stok fisik di display tersisa 3 galon. Permintaan tinggi akhir pekan.',
+  },
+  {
+    id: 'PR-202610-102',
+    date: '10 Okt 2026, 11:15 WIB',
+    requester: 'Siti Aminah (Admin Stock)',
+    urgency: 'Sedang (Buffer Habis)',
+    product: 'Indomie Goreng Original (Dus)',
+    requestedQty: '25 Dus (1.000 Pcs)',
+    estimatedCost: 2875000,
+    status: 'Menunggu Review PO',
+    notes: 'Penjualan carton stabil 4 dus/hari. Perlu reorder sebelum Selasa.',
+  },
+  {
+    id: 'PR-202610-103',
+    date: '09 Okt 2026, 16:40 WIB',
+    requester: 'Budi Warehouse',
+    urgency: 'Normal (Jadwal Rutin)',
+    product: 'Minyak Goreng Sania 2L Pouch',
+    requestedQty: '40 Pcs (10 Karton)',
+    estimatedCost: 1450000,
+    status: 'Ditolak (Budget Limit)',
+    notes: 'Stok gudang masih cukup untuk 8 hari ke depan.',
+  },
+];
+
 export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
   subModule,
   currencyMode = 'IDR',
@@ -39,61 +132,65 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Suppliers Data
-  const [suppliers, setSuppliers] = useState([
-    {
-      id: 'sup_1',
-      name: 'PT Indofood CBP Sukses Makmur Tbk',
-      category: 'Sembako & Mie Instan',
-      contactPerson: 'Hendra Gunawan',
-      phone: '+62 811-2345-6789',
-      email: 'order.jakarta@indofood.co.id',
-      paymentTerms: 'Tempo 30 Hari',
+  // Suppliers & Purchase Requests from Firestore via useFirestoreList
+  const { data: suppliers, addItem: addSupplier } = useFirestoreList('suppliers', INITIAL_SUPPLIERS);
+  const { data: purchaseRequests, addItem: addPurchaseRequest } = useFirestoreList('purchase_requests', INITIAL_PURCHASE_REQUESTS);
+
+  // Modal States
+  const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
+  const [newSupName, setNewSupName] = useState('');
+  const [newSupCategory, setNewSupCategory] = useState('');
+  const [newSupContact, setNewSupContact] = useState('');
+  const [newSupPhone, setNewSupPhone] = useState('');
+  const [newSupTerms, setNewSupTerms] = useState('Tempo 30 Hari');
+
+  const [showAddPRModal, setShowAddPRModal] = useState(false);
+  const [newPrProduct, setNewPrProduct] = useState('');
+  const [newPrQty, setNewPrQty] = useState('');
+  const [newPrUrgency, setNewPrUrgency] = useState('Tinggi (Stok Kritis)');
+  const [newPrRequester, setNewPrRequester] = useState('Kasir Shift 1');
+  const [newPrNotes, setNewPrNotes] = useState('');
+
+  const handleSaveSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupName.trim()) return;
+    await addSupplier({
+      name: newSupName.trim(),
+      category: newSupCategory.trim() || 'Sembako & Retail',
+      contactPerson: newSupContact.trim() || '-',
+      phone: newSupPhone.trim() || '-',
+      email: `${newSupName.toLowerCase().replace(/[^a-z0-9]/g, '')}@supplier.co.id`,
+      paymentTerms: newSupTerms,
       leadTimeDays: 2,
-      totalOrders: 42,
-      rating: 4.9,
+      totalOrders: 0,
+      rating: 5.0,
       status: 'active',
-    },
-    {
-      id: 'sup_2',
-      name: 'PT Tirta Investama (Danone Aqua)',
-      category: 'Air Mineral & Minuman',
-      contactPerson: 'Suryadi Pratama',
-      phone: '+62 812-9876-5432',
-      email: 'distribusi.aqua@danone.com',
-      paymentTerms: 'Cash On Delivery (COD)',
-      leadTimeDays: 1,
-      totalOrders: 68,
-      rating: 4.8,
-      status: 'active',
-    },
-    {
-      id: 'sup_3',
-      name: 'PT Mayora Indah Tbk',
-      category: 'Biskuit & Kopi',
-      contactPerson: 'Dewi Lestari',
-      phone: '+62 813-5566-7788',
-      email: 'sales.dist@mayora.co.id',
-      paymentTerms: 'Tempo 14 Hari',
-      leadTimeDays: 3,
-      totalOrders: 27,
-      rating: 4.7,
-      status: 'active',
-    },
-    {
-      id: 'sup_4',
-      name: 'PT Unilever Indonesia Tbk',
-      category: 'Toiletries & Home Care',
-      contactPerson: 'Reza Fahlevi',
-      phone: '+62 815-1122-3344',
-      email: 'retail.id@unilever.com',
-      paymentTerms: 'Tempo 30 Hari',
-      leadTimeDays: 4,
-      totalOrders: 19,
-      rating: 4.6,
-      status: 'active',
-    },
-  ]);
+    });
+    setNewSupName('');
+    setNewSupCategory('');
+    setNewSupContact('');
+    setNewSupPhone('');
+    setShowAddSupplierModal(false);
+  };
+
+  const handleSavePR = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPrProduct.trim() || !newPrQty.trim()) return;
+    await addPurchaseRequest({
+      date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      requester: newPrRequester,
+      urgency: newPrUrgency,
+      product: newPrProduct.trim(),
+      requestedQty: newPrQty.trim(),
+      estimatedCost: 1500000,
+      status: 'Menunggu Persetujuan',
+      notes: newPrNotes.trim() || '-',
+    });
+    setNewPrProduct('');
+    setNewPrQty('');
+    setNewPrNotes('');
+    setShowAddPRModal(false);
+  };
 
   // Purchase Orders (Daftar Pembelian)
   const [orders, setOrders] = useState([
@@ -129,30 +226,6 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
     },
   ]);
 
-  // Request Pembelian (PR - Purchase Requisition)
-  const [purchaseRequests, setPurchaseRequests] = useState([
-    {
-      id: 'PR-202610-101',
-      date: '10 Okt 2026, 08:30 WIB',
-      requester: 'Ahmad Fauzi (Kasir Pusat)',
-      urgency: 'Tinggi (Stok Kritis)',
-      product: 'Aqua Galon 19L Refill',
-      requestedQty: '60 Galon',
-      estimatedCost: 1080000,
-      status: 'Disetujui Manager',
-    },
-    {
-      id: 'PR-202610-102',
-      date: '10 Okt 2026, 09:15 WIB',
-      requester: 'Siti Rahmawati (Tebet)',
-      urgency: 'Normal',
-      product: 'Indomie Mi Goreng (Dus)',
-      requestedQty: '25 Karton',
-      estimatedCost: 2875000,
-      status: 'Menunggu Persetujuan',
-    },
-  ]);
-
   // Modal State for New Purchase
   const [showPOModal, setShowPOModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(suppliers[0].name);
@@ -179,21 +252,20 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Truck className="w-6 h-6 text-amber-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              PEMBELIAN PRODUK &amp; PENGADAAN (SUPPLY CHAIN)
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Manajemen rantai pasok: direktori supplier, purchase requisition (PR), purchase order (PO), dan analitik harga modal.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Truck className="w-6 h-6 text-amber-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            PEMBELIAN PRODUK &amp; PENGADAAN (SUPPLY CHAIN)
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Manajemen rantai pasok: direktori supplier, purchase requisition (PR), purchase order (PO), dan analitik harga modal.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('daftar_supplier')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
@@ -240,7 +312,6 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
             <span>Statistik Pembelian</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: DAFTAR SUPPLIER */}
       {activeSub === 'daftar_supplier' && (
@@ -257,7 +328,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
               />
             </div>
             <button
-              onClick={() => alert('Form pendaftaran supplier baru terbuka')}
+              onClick={() => setShowAddSupplierModal(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -383,7 +454,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
               <p className="text-xs text-zinc-400">Permintaan restock dari kasir cabang atau tim gudang sebelum dibuatkan PO resmi.</p>
             </div>
             <button
-              onClick={() => alert('Form pengajuan request restock dibuka')}
+              onClick={() => setShowAddPRModal(true)}
               className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -606,6 +677,193 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({
                   className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-500"
                 >
                   Terbitkan PO
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Tambah Supplier Baru */}
+      {showAddSupplierModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Truck className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Tambah Supplier Baru</h3>
+              </div>
+              <button
+                onClick={() => setShowAddSupplierModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveSupplier} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nama Perusahaan / Supplier *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: PT Sumber Pangan Nusantara"
+                  value={newSupName}
+                  onChange={(e) => setNewSupName(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Kategori Produk</label>
+                  <input
+                    type="text"
+                    placeholder="Sembako / Minuman"
+                    value={newSupCategory}
+                    onChange={(e) => setNewSupCategory(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Term Pembayaran</label>
+                  <select
+                    value={newSupTerms}
+                    onChange={(e) => setNewSupTerms(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Cash On Delivery (COD)">COD (Bayar di Tempat)</option>
+                    <option value="Tempo 14 Hari">Tempo 14 Hari</option>
+                    <option value="Tempo 30 Hari">Tempo 30 Hari</option>
+                    <option value="Transfer Dimuka">Transfer Dimuka</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Contact Person (Sales)</label>
+                  <input
+                    type="text"
+                    placeholder="Nama PIC"
+                    value={newSupContact}
+                    onChange={(e) => setNewSupContact(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">No. WhatsApp / HP</label>
+                  <input
+                    type="text"
+                    placeholder="+62 8..."
+                    value={newSupPhone}
+                    onChange={(e) => setNewSupPhone(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddSupplierModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition shadow-lg"
+                >
+                  Simpan Supplier
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Request Restock Baru */}
+      {showAddPRModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <FileCheck className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Buat Pengajuan Restock</h3>
+              </div>
+              <button
+                onClick={() => setShowAddPRModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSavePR} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nama Produk yang Dibutuhkan *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Aqua 600ml (Dus) / Indomie Goreng"
+                  value={newPrProduct}
+                  onChange={(e) => setNewPrProduct(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Jumlah Diminta (Qty) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: 30 Dus"
+                    value={newPrQty}
+                    onChange={(e) => setNewPrQty(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Prioritas / Urgensi</label>
+                  <select
+                    value={newPrUrgency}
+                    onChange={(e) => setNewPrUrgency(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="Tinggi (Stok Kritis)">Tinggi (Stok Kritis)</option>
+                    <option value="Sedang (Buffer Habis)">Sedang (Buffer Habis)</option>
+                    <option value="Normal (Jadwal Rutin)">Normal (Jadwal Rutin)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nama Pemohon / Shift</label>
+                <input
+                  type="text"
+                  value={newPrRequester}
+                  onChange={(e) => setNewPrRequester(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Catatan Tambahan</label>
+                <textarea
+                  rows={2}
+                  placeholder="Alasan pengajuan restock atau kondisi stok toko..."
+                  value={newPrNotes}
+                  onChange={(e) => setNewPrNotes(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-purple-500 resize-none"
+                />
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddPRModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition shadow-lg"
+                >
+                  Kirim Pengajuan
                 </button>
               </div>
             </form>

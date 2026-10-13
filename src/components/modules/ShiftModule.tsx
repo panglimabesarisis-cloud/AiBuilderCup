@@ -100,7 +100,7 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
     },
   ]);
 
-  // Riwayat Shift (Riwayat Shit - preserving requested label)
+  // Riwayat Shift
   const [shiftHistory, setShiftHistory] = useState([
     {
       id: 'SHF-20261009-02',
@@ -215,21 +215,20 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Clock className="w-6 h-6 text-emerald-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              MANAJEMEN SHIFT &amp; KASIR
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Pengendalian laci uang (*cash drawer*), rekonsiliasi kas masuk, kas operasional, dan riwayat tutup shift kasir.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Clock className="w-6 h-6 text-emerald-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            MANAJEMEN SHIFT &amp; KASIR
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Pengendalian laci uang (*cash drawer*), rekonsiliasi kas masuk, kas operasional, dan riwayat tutup shift kasir.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('cashir')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
@@ -271,10 +270,9 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
             }`}
           >
             <History className="w-3.5 h-3.5" />
-            <span>Riwayat Shit</span>
+            <span>Riwayat Shift</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: CASHIR */}
       {activeSub === 'cashir' && (
@@ -365,8 +363,9 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
                 <span>- Catat Kas Keluar</span>
               </button>
               <button
-                onClick={() => alert('Laporan X-Report kasir dicetak ke thermal receipt printer!')}
+                onClick={() => window.print()}
                 className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="Cetak X-Report Shift ke Printer"
               >
                 <Printer className="w-4 h-4 text-zinc-400" />
                 <span>Cetak X-Report Shift</span>
@@ -470,13 +469,13 @@ export const ShiftModule: React.FC<ShiftModuleProps> = ({
         </div>
       )}
 
-      {/* VIEW: RIWAYAT SHIT (Preserve exact requested label) */}
+      {/* VIEW: RIWAYAT SHIFT */}
       {activeSub === 'riwayat_shit' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                Riwayat Shit &amp; Tutup Kasir (Z-Report)
+                Riwayat Shift &amp; Tutup Kasir (Z-Report)
               </h3>
               <p className="text-xs text-zinc-400">
                 Arsip audit laci uang, kesesuaian fisik kasir, dan rekonsiliasi selisih kas harian.

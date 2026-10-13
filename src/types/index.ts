@@ -32,6 +32,11 @@ export interface Product {
   minStockAlert: number;
   imageUrl?: string;
   storageLocation?: string;
+  brand?: string;
+  isActive?: boolean;
+  isPosVisible?: boolean;
+  isPwaVisible?: boolean;
+  weightMl?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -52,6 +57,7 @@ export interface TransactionItem {
 export interface Transaction {
   id: string;
   storeId: string;
+  outletId?: string;
   channel: TransactionChannel;
   customerName: string;
   customerPhone?: string;
@@ -113,43 +119,135 @@ export interface CartItem {
   quantity: number;
 }
 
-/* ------------------------------------------------------------------ */
-/* Product Bundles (Paket Produk)                                      */
-/* ------------------------------------------------------------------ */
-
-/** One product line inside a bundle. All prices are per unit, in IDR, snapshotted when the bundle is saved. */
 export interface BundleItem {
   productId: string;
   productName: string;
-  sku: string;
-  unit: string;
+  sku?: string;
   qty: number;
-  costPrice: number; // purchase / COGS price per unit
-  sellingPrice: number; // standard retail price per unit
-  promoPrice: number; // bundle price per unit
+  promoPrice: number;
+  costPrice: number;
+  sellingPrice: number;
+  discount: number;
+  unit?: string;
 }
 
-export interface Bundle {
-  id: string;
+export interface ProductBundle {
+  id?: string;
   storeId: string;
-  code: string; // unique, human readable (e.g. BUNDLE-01)
+  bundleCode: string;
   name: string;
+  description?: string;
+  startDate: string;
+  endDate: string;
+  quota: number;
+  soldCount?: number;
   items: BundleItem[];
-  startDate: string; // YYYY-MM-DD
-  endDate: string; // YYYY-MM-DD
-  quota: number; // max redemptions
-  redeemedCount: number;
-  isActive: boolean;
-  currency: 'IDR';
-  totalCost: number;
+  totalCostPrice: number;
   totalStandardPrice: number;
   totalPromoPrice: number;
   totalDiscount: number;
-  profit: number;
-  marginPercent: number;
-  createdAt: string;
-  updatedAt: string;
+  bundleProfit: number;
+  status: 'active' | 'expired' | 'deactivated';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-/** A bundle as written to Firestore (id and createdAt are assigned by the service). */
-export type BundleDraft = Omit<Bundle, 'id' | 'storeId' | 'createdAt' | 'updatedAt' | 'redeemedCount' | 'isActive' | 'currency'>;
+export interface CustomerType {
+  id?: string;
+  storeId: string;
+  name: string; // e.g. "UMUM", "MEMBER VIP PWA", "WHOLESALE / GROSIR"
+  code: string; // e.g. "CUST-VIP", "CUST-WHL"
+  discountRate: number; // e.g. 5 for 5%
+  pointMultiplier: number; // e.g. 2 for 2x or 200%
+  minMonthlySpend?: number; // e.g. 1000000
+  description?: string;
+  status: 'active' | 'inactive';
+  benefits?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomerItem {
+  id: string;
+  storeId?: string;
+  name: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  type: string; // matches CustomerType name or code
+  typeCode?: string;
+  creditLimit: number;
+  points: number;
+  debtAmount: number;
+  debtAgeDays?: number;
+  subscriptionPlan?: string;
+  totalSpent: number;
+  totalOrders?: number;
+  joinedDate?: string;
+  lastTransactionDate?: string;
+  status: 'active' | 'inactive';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DiscountPriceRule {
+  id?: string;
+  storeId: string;
+  productId: string;
+  productName: string;
+  productSku?: string;
+  customerTypeId: string;
+  customerTypeName: string; // e.g. "UMUM", "MEMBER", "VIP", "WHOLESALE"
+  customerTypeCode?: string;
+  normalPrice: number;
+  costPrice: number;
+  discountPrice: number;
+  minQty: number; // minimum quantity threshold
+  marginProfit: number; // discountPrice - costPrice
+  pointPercent: number; // percentage of profit allocated as points
+  pointsReward: number; // calculated points reward per unit
+  status: 'active' | 'inactive';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type OrderStatus = 'new' | 'packing' | 'shipped' | 'delivered' | 'returned' | 'cancelled';
+export type OrderChannel = 'visitor' | 'pwa' | 'website';
+
+export interface OrderItem {
+  id?: string;
+  productId: string;
+  name: string;
+  sku: string;
+  packageType: 'carton' | 'unit';
+  qty: number;
+  costPrice: number;
+  sellingPrice: number;
+  subtotal: number;
+  profit?: number;
+}
+
+export interface Order {
+  id: string;
+  storeId?: string;
+  orderNumber: string; // e.g. NL-3062 / ORD-2026-001
+  customerName: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  channel: OrderChannel;
+  itemsCount: number;
+  items: OrderItem[];
+  totalCost: number; // Total Modal (COGS)
+  totalAmount: number; // Total Jual
+  totalProfit: number; // Total Untung (totalAmount - totalCost)
+  status: OrderStatus;
+  paymentMethod: string;
+  paymentStatus: 'paid' | 'unpaid' | 'pending';
+  deliveryStaffId?: string | null;
+  deliveryStaffName?: string | null;
+  deliveryStaffPhone?: string | null;
+  assignedAt?: string | null;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}

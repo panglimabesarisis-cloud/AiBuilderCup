@@ -4,6 +4,8 @@ import {
   Store,
   Clock,
   LayoutDashboard,
+  Gauge,
+  Cpu,
   Boxes,
   Truck,
   ShoppingBag,
@@ -45,6 +47,7 @@ import {
   ClipboardCheck,
   RotateCcw,
 } from 'lucide-react';
+import { RiskCartLogo } from './RiskCartLogo';
 
 export type ProductCartonTabType =
   | 'list'
@@ -166,19 +169,91 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setOpenAiAgentsList(false);
   };
 
-  // 11 Dedicated AI Agents
+  // 11 Dedicated AI Agents with Unique Slugs
   const aiAgentsList = [
-    { id: 'agent_1', name: 'Anti-Fraud Sentinel AI', latency: '142ms', status: 'active' },
-    { id: 'agent_purchase', name: 'AI Advisor Purchase (7-Day Lock)', latency: '190ms', status: 'active', subModule: 'ai_advisor_purchase' },
-    { id: 'agent_2', name: 'Order Intent & Typo Parser', latency: '185ms', status: 'active' },
-    { id: 'agent_3', name: 'Strategic Restock Advisor', latency: '210ms', status: 'active' },
-    { id: 'agent_4', name: 'Tanya AI Business Copilot', latency: '160ms', status: 'active' },
-    { id: 'agent_5', name: 'Dynamic Pricing Optimizer', latency: '195ms', status: 'active' },
-    { id: 'agent_6', name: 'Customer Retention & Churn AI', latency: '175ms', status: 'active' },
-    { id: 'agent_7', name: 'Loss Prevention & Cash Anomaly', latency: '130ms', status: 'active' },
-    { id: 'agent_8', name: 'Supplier Price Anomaly AI', latency: '220ms', status: 'active' },
-    { id: 'agent_9', name: 'Staff KPI & Performance AI', latency: '165ms', status: 'active' },
-    { id: 'agent_10', name: 'Voice & Barcode Scanner AI', latency: '155ms', status: 'active' },
+    {
+      id: 'agent_1',
+      name: 'Anti-Fraud Sentinel AI',
+      slug: 'anti-fraud-sentinel',
+      latency: '142ms',
+      status: 'active',
+      legacySubModule: 'ai_fraud_transaction',
+    },
+    {
+      id: 'agent_purchase',
+      name: 'AI Advisor Purchase (7-Day Lead)',
+      slug: 'ai-advisor-purchase',
+      latency: '190ms',
+      status: 'active',
+      legacySubModule: 'ai_advisor_purchase',
+    },
+    {
+      id: 'agent_2',
+      name: 'Order Intent & Typo Parser',
+      slug: 'order-intent-parser',
+      latency: '185ms',
+      status: 'active',
+      legacySubModule: 'ai_advisor_order',
+    },
+    {
+      id: 'agent_3',
+      name: 'Strategic Restock Advisor',
+      slug: 'strategic-restock-advisor',
+      latency: '210ms',
+      status: 'active',
+      legacySubModule: 'ai_advisor_strategy',
+    },
+    {
+      id: 'agent_4',
+      name: 'Tanya AI Business Copilot',
+      slug: 'business-copilot',
+      latency: '160ms',
+      status: 'active',
+      legacySubModule: 'tanya_ai',
+    },
+    {
+      id: 'agent_5',
+      name: 'Dynamic Pricing Optimizer',
+      slug: 'dynamic-pricing',
+      latency: '195ms',
+      status: 'active',
+    },
+    {
+      id: 'agent_6',
+      name: 'Customer Retention & Churn AI',
+      slug: 'customer-retention',
+      latency: '175ms',
+      status: 'active',
+    },
+    {
+      id: 'agent_7',
+      name: 'Loss Prevention & Cash Anomaly AI',
+      slug: 'loss-prevention',
+      latency: '130ms',
+      status: 'active',
+      legacySubModule: 'ai_preventif',
+    },
+    {
+      id: 'agent_8',
+      name: 'Supplier Price Anomaly AI',
+      slug: 'supplier-anomaly',
+      latency: '220ms',
+      status: 'active',
+    },
+    {
+      id: 'agent_9',
+      name: 'Staff KPI & Performance AI',
+      slug: 'staff-kpi',
+      latency: '165ms',
+      status: 'active',
+    },
+    {
+      id: 'agent_10',
+      name: 'Voice & Barcode Scanner AI',
+      slug: 'scanner-ai',
+      latency: '155ms',
+      status: 'active',
+    },
   ];
 
   const formatTimer = (totalSec: number) => {
@@ -188,7 +263,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const handleSelectAiAgent = (slug: string) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('agent', slug);
+      window.history.pushState({ agent: slug }, '', url.toString());
+    } catch (e) {
+      window.history.pushState({ agent: slug }, '', `?agent=${slug}`);
+    }
+    setActiveTab('module_ai');
+    if (setActiveSubModule) {
+      setActiveSubModule(slug);
+    }
+    if (isMobileOpen) setIsMobileOpen(false);
+  };
+
   const handleNav = (tabId: string, subId?: string) => {
+    if (tabId === 'module_ai' && subId) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('agent', subId);
+        window.history.pushState({ agent: subId }, '', url.toString());
+      } catch (e) {
+        window.history.pushState({ agent: subId }, '', `?agent=${subId}`);
+      }
+    } else if (tabId !== 'module_ai') {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('agent')) {
+          url.searchParams.delete('agent');
+          window.history.pushState({}, '', url.toString());
+        }
+      } catch (e) {}
+    }
     setActiveTab(tabId);
     if (subId && setActiveSubModule) {
       setActiveSubModule(subId);
@@ -213,34 +320,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex flex-col justify-between h-full select-none text-xs">
         {/* Top Header & Scrollable Nav */}
         <div className="space-y-2 overflow-y-auto overflow-x-hidden flex-1 px-3 py-3 custom-scrollbar">
+          {!collapsed && (
+            <div className="2xl:hidden pb-2 border-b border-zinc-800 space-y-0.5">
+              <div className="px-2 py-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                Menu Utama
+              </div>
+              {[
+                { id: 'pos_machine', label: 'POS Machine', icon: Store },
+                { id: 'orders', label: 'Orders (Wharf)', icon: ShoppingBag },
+                { id: 'admin_dashboard', label: 'Dashboard Admin', icon: LayoutDashboard },
+                { id: 'transactions', label: 'Transactions Feed', icon: ShoppingBag },
+                { id: 'assets', label: 'Financial Assets', icon: Gauge },
+                { id: 'products', label: 'Halaman Produk', icon: Boxes },
+                { id: 'anti_fraud', label: 'AI Anti-Fraud', icon: Cpu },
+                { id: 'restock', label: 'Restock Advisor', icon: Sparkles },
+                { id: 'client_pwa', label: 'Client PWA', icon: Smartphone },
+                { id: 'settings', label: 'Settings', icon: Settings },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => handleNav(item.id)}
+                    className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-xs font-semibold ${
+                      isActive
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-300 hover:bg-zinc-800/60'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Header Branding */}
           <div className="pb-2.5 border-b border-zinc-800">
             {collapsed ? (
               <button
                 onClick={toggleCollapsed}
-                className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-400 flex items-center justify-center transition hover:bg-blue-600/30 mx-auto cursor-pointer"
-                title="Perluas Sidebar"
+                className="w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 flex items-center justify-center transition hover:bg-blue-600/20 mx-auto cursor-pointer p-1"
+                title="Perluas Sidebar - RiskCart AI"
               >
-                <Store className="w-5 h-5 text-blue-400" />
+                <RiskCartLogo size="sm" showSubtitle={false} className="justify-center" />
               </button>
             ) : (
               <div className="flex items-center justify-between w-full">
                 <div
                   onClick={() => handleNav('admin_dashboard')}
-                  className="flex items-center gap-2 cursor-pointer group"
+                  className="cursor-pointer group flex items-center"
+                  title="RiskCart Artificial Intelligence"
                 >
-                  <div className="w-8 h-8 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-400 flex items-center justify-center group-hover:scale-105 transition">
-                    <Store className="w-4 h-4 text-blue-400" />
-                  </div>
-                  <div>
-                    <span className="font-black text-white text-xs tracking-tight block">
-                      RISKCART ECOSYSTEM
-                    </span>
-                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Multi-Outlet Cloud
-                    </span>
-                  </div>
+                  <RiskCartLogo size="sm" showSubtitle={true} />
                 </div>
 
                 {isMobile ? (
@@ -280,6 +414,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {!collapsed && <span>Terminal Kasir POS</span>}
             </div>
             {!collapsed && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200">LIVE</span>}
+          </button>
+
+          {/* Primary Orders Item directly underneath POS Machine / Terminal Kasir */}
+          <button
+            onClick={() => handleNav('orders')}
+            className={`w-full flex items-center ${
+              collapsed ? 'justify-center p-2' : 'justify-between px-3 py-2'
+            } rounded-xl font-bold transition shadow-sm cursor-pointer mt-1.5 ${
+              activeTab === 'orders'
+                ? 'bg-blue-600 text-white shadow-blue-600/30'
+                : 'bg-slate-900/90 border border-slate-800 text-slate-200 hover:text-white hover:bg-slate-800/80 hover:border-blue-500/40'
+            }`}
+            title="Orders Management (Wharf)"
+          >
+            <div className="flex items-center gap-2">
+              <ShoppingBag className="w-4 h-4 shrink-0 text-blue-400" />
+              {!collapsed && <span>Orders</span>}
+            </div>
+            {!collapsed && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30 tracking-wide">
+                WHARF
+              </span>
+            )}
           </button>
 
           {/* Menu Search Bar */}
@@ -349,27 +506,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button onClick={() => handleNav('module_ai', 'ai_master')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
                     Master AI
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_advisor_purchase')} className="w-full text-left py-1 hover:text-amber-400 block cursor-pointer flex items-center justify-between group">
+                  <button onClick={() => handleNav('module_ai', 'ai-advisor-purchase')} className="w-full text-left py-1 hover:text-amber-400 block cursor-pointer flex items-center justify-between group">
                     <span className="group-hover:text-amber-300 font-semibold text-amber-200/95">AI Advisor Purchase</span>
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">Lock 7-Hari</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">7-Day Lock</span>
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_advisor_order')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
-                    AI Advisor Order
+                  <button onClick={() => handleNav('module_ai', 'order-intent-parser')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
+                    Order Intent &amp; Typo Parser
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_advisor_strategy')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
-                    AI Advisor Strategy
+                  <button onClick={() => handleNav('module_ai', 'strategic-restock-advisor')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
+                    Strategic Restock Advisor
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_chat_pwa')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
+                  <button onClick={() => handleNav('module_ai', 'order-intent-parser')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
                     AI Chat Client PWA
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_preventif')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
-                    AI Preventif
+                  <button onClick={() => handleNav('module_ai', 'loss-prevention')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
+                    Loss Prevention AI
                   </button>
-                  <button onClick={() => handleNav('module_ai', 'ai_fraud_transaction')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
-                    AI Fraud Transaction
+                  <button onClick={() => handleNav('module_ai', 'anti-fraud-sentinel')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
+                    Anti-Fraud Sentinel AI
                   </button>
                   <button onClick={() => handleNav('module_ai', 'ai_knowledge')} className="w-full text-left py-1 hover:text-purple-400 block cursor-pointer">
-                    Knowledge All AI Agent
+                    Knowledge Base (All AI Agents)
                   </button>
 
                   {/* Expandable Nested List of AI Agents */}
@@ -377,30 +534,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       onClick={() => setOpenAiAgentsList((prev) => !prev)}
                       className="w-full flex items-center justify-between py-1 text-purple-300 hover:text-purple-200 font-semibold cursor-pointer text-[10px]"
-                      title="Klik untuk buka / tutup daftar agen AI"
+                      title="Click to toggle AI agents list"
                     >
                       <div className="flex items-center gap-1.5">
                         <Sparkles className="w-3 h-3 text-purple-400 shrink-0" />
-                        <span>List Agen AI ({aiAgentsList.length} Agen)</span>
+                        <span>AI Agents List ({aiAgentsList.length} Agents)</span>
                       </div>
                       <ChevronDown className={`w-3 h-3 text-purple-400 transition-transform ${openAiAgentsList ? '' : '-rotate-90'}`} />
                     </button>
 
                     {openAiAgentsList && (
-                      <div className="pl-1.5 space-y-1 pt-1.5 text-[10px] text-zinc-400">
-                        {aiAgentsList.map((agent) => (
-                          <button
-                            key={agent.id}
-                            onClick={() => handleNav('module_ai', (agent as any).subModule || 'ai_master')}
-                            className="w-full text-left py-1 px-1.5 rounded-lg hover:bg-purple-950/40 hover:text-purple-300 flex items-center justify-between group transition cursor-pointer"
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 group-hover:scale-125 transition-transform" />
-                              <span className="truncate">{agent.name}</span>
-                            </div>
-                            <span className="text-[9px] text-zinc-500 font-mono group-hover:text-purple-400">{agent.latency}</span>
-                          </button>
-                        ))}
+                      <div className="space-y-1 pt-1.5 text-[10px]">
+                        {aiAgentsList.map((agent) => {
+                          const urlAgentSlug =
+                            typeof window !== 'undefined'
+                              ? new URLSearchParams(window.location.search).get('agent')
+                              : null;
+                          const isAgentActive =
+                            activeTab === 'module_ai' &&
+                            (activeSubModule === agent.slug ||
+                              urlAgentSlug === agent.slug ||
+                              (agent.legacySubModule && activeSubModule === agent.legacySubModule));
+
+                          return (
+                            <button
+                              key={agent.id}
+                              onClick={() => handleSelectAiAgent(agent.slug)}
+                              title={`${agent.name} (?agent=${agent.slug})`}
+                              className={`w-full text-left py-1.5 px-2 rounded-r-lg flex items-center justify-between group transition cursor-pointer ${
+                                isAgentActive
+                                  ? 'bg-emerald-500/20 border-l-2 border-emerald-400 ring-1 ring-emerald-500/30 text-white font-medium shadow-sm'
+                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border-l-2 border-transparent font-normal'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                {isAgentActive ? (
+                                  <span className="relative flex h-2 w-2 shrink-0">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                  </span>
+                                ) : (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0 group-hover:bg-slate-400 transition-colors" />
+                                )}
+                                <span
+                                  className={`truncate text-[11px] ${
+                                    isAgentActive
+                                      ? 'text-white font-semibold'
+                                      : 'text-slate-300 group-hover:text-white'
+                                  }`}
+                                >
+                                  {agent.name}
+                                </span>
+                              </div>
+                              <span
+                                className={`text-[9px] font-mono shrink-0 ml-1.5 ${
+                                  isAgentActive
+                                    ? 'text-emerald-400 font-bold'
+                                    : 'text-slate-500 group-hover:text-slate-400'
+                                }`}
+                              >
+                                {agent.latency}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -468,7 +665,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     Kas Keluar
                   </button>
                   <button onClick={() => handleNav('module_shift', 'riwayat_shit')} className="w-full text-left py-1 hover:text-emerald-400 block cursor-pointer">
-                    Riwayat Shit
+                    Riwayat Shift
                   </button>
                 </div>
               )}
@@ -607,6 +804,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {(!collapsed && openGroups.transaksi_pos) && (
                 <div className="pl-6 pr-1 py-1 space-y-1 bg-zinc-950/40 rounded-xl border-l-2 border-blue-500/80 my-1 text-[11px] font-medium text-zinc-400">
+                  <button onClick={() => handleNav('orders')} className="w-full text-left py-1 hover:text-blue-400 block cursor-pointer flex items-center justify-between text-blue-300 font-semibold">
+                    <span>Orders (Wharf)</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30">NEW</span>
+                  </button>
                   <button onClick={() => handleNav('module_pos_transactions', 'transaksi_penjualan')} className="w-full text-left py-1 hover:text-blue-400 block cursor-pointer">
                     Transaksi Penjualan
                   </button>
@@ -1020,7 +1221,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* Desktop Persistent Sidebar */}
       <aside
-        className={`hidden md:flex flex-col shrink-0 bg-zinc-900 border-r border-zinc-800 transition-all duration-200 z-30 ${
+        className={`hidden xl:flex flex-col shrink-0 bg-zinc-900 border-r border-zinc-800 transition-all duration-200 z-30 ${
           isCollapsed ? 'w-16' : 'w-64'
         }`}
       >
@@ -1029,7 +1230,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Mobile Drawer */}
       {isMobileOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden bg-black/80 backdrop-blur-sm animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex xl:hidden bg-black/80 backdrop-blur-sm animate-in fade-in">
           <div className="w-72 max-w-[85vw] h-full bg-zinc-900 border-r border-zinc-800 shadow-2xl flex flex-col justify-between">
             {renderContent(false, true)}
           </div>

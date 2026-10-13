@@ -27,6 +27,8 @@ import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Product } from '../../types';
 import { INITIAL_PRODUCTS } from '../../services/dataSeeder';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
+import { AddProductForm } from '../pos/AddProductForm';
 
 interface InventoryTrackingModuleProps {
   subModule: 'inventory' | 'kartu_stok' | 'stok_minimum' | 'stok_opname' | 'produk_restock';
@@ -47,6 +49,18 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<string>('ALL');
 
+  // Edit Details, Stock Adjustment, and Threshold Modal states
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [stockAdjustProduct, setStockAdjustProduct] = useState<Product | null>(null);
+  const [adjustQuantity, setAdjustQuantity] = useState<string>('');
+  const [adjustReason, setAdjustReason] = useState<string>('Penyesuaian Fisik Rak');
+  const [thresholdModalProduct, setThresholdModalProduct] = useState<Product | null>(null);
+  const [modalThresholdVal, setModalThresholdVal] = useState<number>(10);
+
+  // Native HTML date filter states
+  const [createdFrom, setCreatedFrom] = useState<string>('');
+  const [createdTo, setCreatedTo] = useState<string>('');
+
   // Synchronize submodule prop
   useEffect(() => {
     if (subModule) {
@@ -54,18 +68,37 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
     }
   }, [subModule]);
 
-  // Firestore Products listener with fallback
+  // Firestore Products real-time listener from stores/store_001/products
   useEffect(() => {
     try {
       const unsubscribe = onSnapshot(
-        collection(db, 'products'),
+        collection(db, 'stores/store_001/products'),
         (snapshot) => {
           if (!snapshot.empty) {
-            const list = snapshot.docs.map((d) => ({
-              id: d.id,
-              ...d.data(),
-            })) as Product[];
+            const list = snapshot.docs.map((d) => {
+              const data = d.data() as any;
+              return {
+                id: d.id,
+                storeId: data.storeId || 'store_001',
+                name: data.name || '',
+                sku: data.sku || d.id,
+                category: data.category || 'MINERAL',
+                barcode: data.barcode || '',
+                piecesPerCarton: Number(data.piecesPerCarton || 1),
+                stockInUnits: Number(data.stockInUnits ?? data.stock ?? 0),
+                costPerUnit: Number(data.costPerUnit ?? data.costPrice ?? 0),
+                pricePerUnit: Number(data.pricePerUnit ?? data.price ?? 0),
+                pricePerCarton: Number(data.pricePerCarton ?? data.price ?? 0),
+                minStockAlert: Number(data.minStockAlert ?? data.minStock ?? 10),
+                imageUrl: data.imageUrl || '',
+                storageLocation: data.storageLocation || 'Rak A-01 / Flagship',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt,
+              };
+            }) as Product[];
             setProducts(list);
+          } else {
+            setProducts(INITIAL_PRODUCTS as Product[]);
           }
         },
         (err) => console.warn('Offline fallback products in inventory module:', err)
@@ -190,16 +223,160 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
   const [mutQty, setMutQty] = useState('1');
   const [mutReason, setMutReason] = useState('Penyesuaian Fisik');
 
+  // Purchase Orders via useFirestoreList
+  interface PurchaseOrderRecord {
+    id?: string;
+    poNumber: string;
+    date: string;
+    productId: string;
+    productName: string;
+    cartons: number;
+    totalUnits: number;
+    supplier: string;
+    estimatedCost: number;
+    status: string;
+    notes: string;
+  }
+  const { data: purchaseOrders, addItem: addPurchaseOrder } = useFirestoreList<PurchaseOrderRecord>(
+    'purchase_orders',
+    []
+  );
+
+  // Modal State: Buat PO Baru
+  const [showPOModal, setShowPOModal] = useState(false);
+  const [selectedProductForPO, setSelectedProductForPO] = useState<Product | null>(null);
+  const [poCartons, setPoCartons] = useState(3);
+  const [poSupplier, setPoSupplier] = useState('PT Indofood CBP Sukses Makmur Tbk');
+  const [poNotes, setPoNotes] = useState('Restock darurat produk stok kritis');
+
+  const handleSavePO = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProductForPO) return;
+    const pieces = selectedProductForPO.piecesPerCarton || 1;
+    const totalUnits = poCartons * pieces;
+    const cost =
+      poCartons *
+      (selectedProductForPO.pricePerCarton ||
+        selectedProductForPO.pricePerUnit * pieces);
+    await addPurchaseOrder({
+      poNumber: `PO-${Date.now().toString().slice(-6)}`,
+      date: new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
+      productId: selectedProductForPO.id,
+      productName: selectedProductForPO.name,
+      cartons: Number(poCartons),
+      totalUnits,
+      supplier: poSupplier,
+      estimatedCost: cost,
+      status: 'Draft PO Terbit',
+      notes: poNotes,
+    });
+    setShowPOModal(false);
+  };
+
   // Inline Threshold Editor State
   const [editingThresholdId, setEditingThresholdId] = useState<string | null>(null);
   const [thresholdVal, setThresholdVal] = useState<number>(10);
 
-  // Handle Save Threshold
-  const handleSaveThreshold = (pId: string) => {
+  // Handle Save Threshold in Firestore (Inline Editor)
+  const handleSaveThreshold = async (pId: string) => {
+    try {
+      await updateDoc(doc(db, 'stores/store_001/products', pId), {
+        minStockAlert: thresholdVal,
+        minStock: thresholdVal,
+        updatedAt: new Date().toISOString(),
+      });
+      try {
+        await updateDoc(doc(db, 'products', pId), {
+          minStockAlert: thresholdVal,
+          minStock: thresholdVal,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+    } catch (err) {
+      console.warn('Error saving threshold to Firestore:', err);
+    }
     setProducts((prev) =>
       prev.map((p) => (p.id === pId ? { ...p, minStockAlert: thresholdVal } : p))
     );
     setEditingThresholdId(null);
+  };
+
+  // Handle Save Threshold from Modal in Firestore
+  const handleSaveThresholdModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!thresholdModalProduct) return;
+    try {
+      await updateDoc(doc(db, 'stores/store_001/products', thresholdModalProduct.id), {
+        minStockAlert: modalThresholdVal,
+        minStock: modalThresholdVal,
+        updatedAt: new Date().toISOString(),
+      });
+      try {
+        await updateDoc(doc(db, 'products', thresholdModalProduct.id), {
+          minStockAlert: modalThresholdVal,
+          minStock: modalThresholdVal,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+    } catch (err) {
+      console.warn('Error saving threshold modal to Firestore:', err);
+    }
+    setProducts((prev) =>
+      prev.map((p) => (p.id === thresholdModalProduct.id ? { ...p, minStockAlert: modalThresholdVal } : p))
+    );
+    setThresholdModalProduct(null);
+  };
+
+  // Handle Save Stock Adjustment in Firestore
+  const handleSaveStockAdjustment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stockAdjustProduct) return;
+    const newQty = Number(adjustQuantity);
+    if (isNaN(newQty)) return;
+    const oldQty = stockAdjustProduct.stockInUnits || 0;
+    const diff = newQty - oldQty;
+
+    try {
+      await updateDoc(doc(db, 'stores/store_001/products', stockAdjustProduct.id), {
+        stockInUnits: newQty,
+        stock: newQty,
+        updatedAt: new Date().toISOString(),
+      });
+      try {
+        await updateDoc(doc(db, 'products', stockAdjustProduct.id), {
+          stockInUnits: newQty,
+          stock: newQty,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+
+      // Add mutation to stock cards ledger
+      const cardItem = {
+        id: `MUT-ADJ-${Date.now().toString().slice(-4)}`,
+        date: new Date().toLocaleDateString('id-ID') + ', ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+        productName: stockAdjustProduct.name,
+        sku: stockAdjustProduct.sku || 'SKU',
+        location: stockAdjustProduct.storageLocation || 'RiskCart Flagship Store',
+        mutationType: 'PENYESUAIAN' as const,
+        refDoc: `ADJ #${Date.now().toString().slice(-6)}`,
+        qtyChange: diff,
+        runningBalance: newQty,
+        actor: 'Admin Inventory',
+        notes: adjustReason || 'Penyesuaian Stok Manual',
+      };
+      setStockCards((prev) => [cardItem, ...prev]);
+      setProducts((prev) =>
+        prev.map((p) => (p.id === stockAdjustProduct.id ? { ...p, stockInUnits: newQty, stock: newQty } : p))
+      );
+    } catch (err) {
+      console.warn('Error adjusting stock in Firestore:', err);
+    } finally {
+      setStockAdjustProduct(null);
+    }
   };
 
   // Handle Add Stock Opname
@@ -268,33 +445,66 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
   const totalAvailableUnits = Math.max(0, totalPhysicalUnits - totalReservedUnits);
   const totalAssetCOGS = products.reduce((acc, p) => acc + ((p.stockInUnits || 0) * (p.costPerUnit || 0)), 0);
 
-  // Filter products
+  // Filter products by search query and native type="date" Created from / To
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (p.sku && p.sku.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.category && p.category.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesSearch;
+    if (!matchesSearch) return false;
+
+    if (createdFrom) {
+      const pDate = p.createdAt ? new Date(p.createdAt) : null;
+      if (pDate && !isNaN(pDate.getTime())) {
+        const fromDate = new Date(createdFrom);
+        fromDate.setHours(0, 0, 0, 0);
+        if (pDate < fromDate) return false;
+      }
+    }
+
+    if (createdTo) {
+      const pDate = p.createdAt ? new Date(p.createdAt) : null;
+      if (pDate && !isNaN(pDate.getTime())) {
+        const toDate = new Date(createdTo);
+        toDate.setHours(23, 59, 59, 999);
+        if (pDate > toDate) return false;
+      }
+    }
+
+    return true;
   });
+
+  if (editingProduct) {
+    return (
+      <div className="space-y-4 animate-in fade-in duration-150">
+        <AddProductForm
+          isDark={true}
+          initialProduct={editingProduct}
+          onBack={() => setEditingProduct(null)}
+          onSubmit={() => setEditingProduct(null)}
+          onToggleTheme={() => {}}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header & Sub Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Boxes className="w-6 h-6 text-amber-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              5.14 LACAK INVENTORY &amp; KARTU STOK
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Pembedaan stok fisik, stok dicadangkan (reserved), dan stok siap jual. Buku kartu stok mutasi abadi, ambang batas minimum, dan audit stok opname.
-          </p>
+      {/* Header */}
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Boxes className="w-6 h-6 text-amber-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            5.14 LACAK INVENTORY &amp; KARTU STOK
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Pembedaan stok fisik, stok dicadangkan (reserved), dan stok siap jual. Buku kartu stok mutasi abadi, ambang batas minimum, dan audit stok opname.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('inventory')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
@@ -339,7 +549,6 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
             <span>Produk Restock</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: INVENTORY */}
       {activeSub === 'inventory' && (
@@ -376,22 +585,59 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
             </div>
           </div>
 
-          {/* Search & Actions */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Cari SKU / nama barang / barcode..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-              />
+          {/* Search, Date Filter & Actions */}
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Cari SKU / nama barang / barcode..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {/* Native HTML Date Inputs */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 text-zinc-400 text-xs">
+                  <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-[11px] font-medium">Created from:</span>
+                  <input
+                    type="date"
+                    value={createdFrom}
+                    onChange={(e) => setCreatedFrom(e.target.value)}
+                    className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-white [color-scheme:dark] focus:outline-none focus:border-blue-500 cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 text-zinc-400 text-xs">
+                  <span className="text-[11px] font-medium">To:</span>
+                  <input
+                    type="date"
+                    value={createdTo}
+                    onChange={(e) => setCreatedTo(e.target.value)}
+                    className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-white [color-scheme:dark] focus:outline-none focus:border-blue-500 cursor-pointer"
+                  />
+                </div>
+                {(createdFrom || createdTo) && (
+                  <button
+                    onClick={() => {
+                      setCreatedFrom('');
+                      setCreatedTo('');
+                    }}
+                    className="text-[11px] text-zinc-400 hover:text-white px-2 py-1 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
+
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onNavigateTab && onNavigateTab('products')}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md transition cursor-pointer whitespace-nowrap"
               >
                 + Kelola Master Produk &amp; Dus
               </button>
@@ -411,6 +657,7 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
                   <th className="py-3 px-4 text-center">Siap Jual</th>
                   <th className="py-3 px-4 text-right">Modal Pokok (COGS)</th>
                   <th className="py-3 px-4 text-center">Status Stok</th>
+                  <th className="py-3 px-4 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
@@ -456,6 +703,30 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
                         >
                           {onHand === 0 ? 'HABIS' : isLow ? 'MENIPIS' : 'AMAN'}
                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setEditingProduct(p)}
+                            className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Edit Details"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Edit Details</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setStockAdjustProduct(p);
+                              setAdjustQuantity(String(p.stockInUnits || 0));
+                              setAdjustReason('Penyesuaian Fisik Rak');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Stock Adjustment"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Stock Adjustment</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -759,11 +1030,14 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
                 </div>
                 <button
                   onClick={() => {
-                    alert(`Purchase Order dibuat untuk ${p.name}!`);
+                    setSelectedProductForPO(p);
+                    setPoCartons(3);
+                    setShowPOModal(true);
                   }}
-                  className="w-full py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold transition cursor-pointer"
+                  className="w-full py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md"
                 >
-                  Buat Draft Purchase Order
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Buat Draft Purchase Order</span>
                 </button>
               </div>
             ))}
@@ -924,6 +1198,257 @@ export const InventoryTrackingModule: React.FC<InventoryTrackingModuleProps> = (
                   className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-500"
                 >
                   Posting Mutasi ke Kartu Stok
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: BUAT DRAFT PURCHASE ORDER */}
+      {showPOModal && selectedProductForPO && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Truck className="w-5 h-5 text-purple-400" />
+                <h3 className="font-bold text-white text-base">Buat Draft Purchase Order (PO)</h3>
+              </div>
+              <button
+                onClick={() => setShowPOModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSavePO} className="space-y-4 text-xs">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-400">Produk Restock:</span>
+                  <span className="font-bold text-white text-sm">{selectedProductForPO.name}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-zinc-500">Isi Kemasan per Dus:</span>
+                  <span className="font-mono text-zinc-300">{selectedProductForPO.piecesPerCarton || 1} Pcs/Dus</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-zinc-500">Stok Saat Ini:</span>
+                  <span className="font-mono text-rose-400">{selectedProductForPO.stockInUnits} unit</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Jumlah Dus (Karton) *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={poCartons}
+                    onChange={(e) => setPoCartons(Math.max(1, Number(e.target.value)))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Total Unit Didapat</label>
+                  <div className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-emerald-400 font-mono font-bold">
+                    {poCartons * (selectedProductForPO.piecesPerCarton || 1)} unit
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Supplier Distributor *</label>
+                <select
+                  value={poSupplier}
+                  onChange={(e) => setPoSupplier(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="PT Indofood CBP Sukses Makmur Tbk">PT Indofood CBP Sukses Makmur Tbk</option>
+                  <option value="PT Tirta Investama (Danone Aqua)">PT Tirta Investama (Danone Aqua)</option>
+                  <option value="PT Mayora Indah Tbk">PT Mayora Indah Tbk</option>
+                  <option value="PT Unilever Indonesia Tbk">PT Unilever Indonesia Tbk</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Catatan Purchase Order</label>
+                <input
+                  type="text"
+                  value={poNotes}
+                  onChange={(e) => setPoNotes(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 flex justify-between items-center">
+                <span className="text-zinc-400">Estimasi Belanja:</span>
+                <span className="font-mono font-bold text-amber-400 text-sm">
+                  Rp {(
+                    poCartons *
+                    (selectedProductForPO.pricePerCarton ||
+                      selectedProductForPO.pricePerUnit * (selectedProductForPO.piecesPerCarton || 1))
+                  ).toLocaleString('id-ID')}
+                </span>
+              </div>
+
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowPOModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition shadow-lg"
+                >
+                  Terbitkan Draft PO
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Stock Adjustment */}
+      {stockAdjustProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Stock Adjustment</h3>
+              </div>
+              <button
+                onClick={() => setStockAdjustProduct(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-xs text-zinc-400">Produk Terpilih:</span>
+              <div className="font-bold text-white text-sm">{stockAdjustProduct.name}</div>
+              <div className="text-xs font-mono text-zinc-500">
+                SKU: {stockAdjustProduct.sku} &bull; Stok Saat Ini: {stockAdjustProduct.stockInUnits || 0} pcs
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveStockAdjustment} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                  Jumlah Stok Fisik Baru (Pcs)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  value={adjustQuantity}
+                  onChange={(e) => setAdjustQuantity(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold text-base focus:outline-none focus:border-amber-500"
+                  placeholder="Masukkan jumlah stok aktual..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                  Alasan Penyesuaian
+                </label>
+                <select
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="Penyesuaian Fisik Rak">Koreksi Fisik Rak / Stock Opname</option>
+                  <option value="Barang Rusak / Kadaluarsa">Barang Rusak / Bocor / Kadaluarsa</option>
+                  <option value="Penerimaan Bonus / Supplier">Penerimaan Bonus Supplier</option>
+                  <option value="Retur Pelanggan">Retur Pelanggan</option>
+                  <option value="Lainnya">Lainnya</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStockAdjustProduct(null)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-600/20"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Simpan Penyesuaian di Firestore</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Ubah Batas Minimum Stok */}
+      {thresholdModalProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-rose-500" />
+                <h3 className="text-base font-bold text-white">Ubah Batas Minimum Stok</h3>
+              </div>
+              <button
+                onClick={() => setThresholdModalProduct(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-xs text-zinc-400">Produk:</span>
+              <div className="font-bold text-white text-sm">{thresholdModalProduct.name}</div>
+              <div className="text-xs font-mono text-zinc-500">
+                SKU: {thresholdModalProduct.sku} &bull; Batas Saat Ini: {thresholdModalProduct.minStockAlert || 10} pcs
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveThresholdModal} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                  Ambang Batas Minimum Baru (Pcs)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  value={modalThresholdVal}
+                  onChange={(e) => setModalThresholdVal(Number(e.target.value))}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold text-base focus:outline-none focus:border-rose-500"
+                  placeholder="Contoh: 15"
+                />
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  Sistem akan memicu peringatan restock darurat jika stok berada di bawah jumlah ini.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setThresholdModalProduct(null)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-rose-600/20"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Simpan Batas di Firestore</span>
                 </button>
               </div>
             </form>

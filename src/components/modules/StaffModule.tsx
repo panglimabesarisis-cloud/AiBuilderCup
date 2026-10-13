@@ -14,13 +14,63 @@ import {
   Briefcase,
   AlertCircle,
   TrendingUp,
+  X,
+  User,
 } from 'lucide-react';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
 
 interface StaffModuleProps {
   subModule: 'daftar_staff' | 'role_jabatan' | 'hak_akses' | 'kpi_staff' | 'ai_setting_job_staff';
   currencyMode?: 'IDR' | 'USD';
   onNavigateTab?: (tab: string) => void;
 }
+
+const INITIAL_STAFF = [
+  {
+    id: 'STF-01',
+    name: 'Ahmad Fauzi',
+    role: 'Kasir Senior (Head Cashier)',
+    outlet: 'RiskCart Flagship Store (Pusat)',
+    phone: '+62 812-3344-5566',
+    shift: 'Pagi (07:30 - 15:00)',
+    kpiScore: 96.5,
+    joinedDate: 'Januari 2025',
+    status: 'active',
+  },
+  {
+    id: 'STF-02',
+    name: 'Siti Rahmawati',
+    role: 'Kasir Shift Sore',
+    outlet: 'RiskCart Express Tebet',
+    phone: '+62 813-4455-6677',
+    shift: 'Sore (15:00 - 22:30)',
+    kpiScore: 94.0,
+    joinedDate: 'Maret 2025',
+    status: 'active',
+  },
+  {
+    id: 'STF-03',
+    name: 'Bambang Supriyanto',
+    role: 'Kepala Gudang & Bongkar Muat',
+    outlet: 'Central Distribution Center (CDC)',
+    phone: '+62 817-6677-8899',
+    shift: 'Reguler (08:00 - 17:00)',
+    kpiScore: 98.2,
+    joinedDate: 'November 2024',
+    status: 'active',
+  },
+  {
+    id: 'STF-04',
+    name: 'Rian Hidayat',
+    role: 'Kurir Pengantar Galon & Dus PWA',
+    outlet: 'RiskCart Flagship Store (Pusat)',
+    phone: '+62 819-7788-9900',
+    shift: 'On-Demand Antar',
+    kpiScore: 91.8,
+    joinedDate: 'Mei 2025',
+    status: 'active',
+  },
+];
 
 export const StaffModule: React.FC<StaffModuleProps> = ({
   subModule,
@@ -33,53 +83,34 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Staff Employees
-  const [staffList, setStaffList] = useState([
-    {
-      id: 'STF-01',
-      name: 'Ahmad Fauzi',
-      role: 'Kasir Senior (Head Cashier)',
-      outlet: 'RiskCart Flagship Store (Pusat)',
-      phone: '+62 812-3344-5566',
-      shift: 'Pagi (07:30 - 15:00)',
-      kpiScore: 96.5,
-      joinedDate: 'Januari 2025',
+  // Staff Employees via useFirestoreList
+  const { data: staffList, addItem: addStaff } = useFirestoreList('staff', INITIAL_STAFF);
+
+  // Modal State for Add Staff
+  const [showAddStaffModal, setShowAddStaffModal] = useState(false);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffRole, setNewStaffRole] = useState('Kasir Reguler');
+  const [newStaffOutlet, setNewStaffOutlet] = useState('RiskCart Flagship Store (Pusat)');
+  const [newStaffPhone, setNewStaffPhone] = useState('');
+  const [newStaffShift, setNewStaffShift] = useState('Pagi (07:30 - 15:00)');
+
+  const handleSaveStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStaffName.trim()) return;
+    await addStaff({
+      name: newStaffName.trim(),
+      role: newStaffRole,
+      outlet: newStaffOutlet,
+      phone: newStaffPhone.trim() || '-',
+      shift: newStaffShift,
+      kpiScore: 95.0,
+      joinedDate: new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }),
       status: 'active',
-    },
-    {
-      id: 'STF-02',
-      name: 'Siti Rahmawati',
-      role: 'Kasir Shift Sore',
-      outlet: 'RiskCart Express Tebet',
-      phone: '+62 813-4455-6677',
-      shift: 'Sore (15:00 - 22:30)',
-      kpiScore: 94.0,
-      joinedDate: 'Maret 2025',
-      status: 'active',
-    },
-    {
-      id: 'STF-03',
-      name: 'Bambang Supriyanto',
-      role: 'Kepala Gudang & Bongkar Muat',
-      outlet: 'Central Distribution Center (CDC)',
-      phone: '+62 817-6677-8899',
-      shift: 'Reguler (08:00 - 17:00)',
-      kpiScore: 98.2,
-      joinedDate: 'November 2024',
-      status: 'active',
-    },
-    {
-      id: 'STF-04',
-      name: 'Rian Hidayat',
-      role: 'Kurir Pengantar Galon & Dus PWA',
-      outlet: 'RiskCart Flagship Store (Pusat)',
-      phone: '+62 819-7788-9900',
-      shift: 'On-Demand Antar',
-      kpiScore: 91.8,
-      joinedDate: 'Mei 2025',
-      status: 'active',
-    },
-  ]);
+    });
+    setNewStaffName('');
+    setNewStaffPhone('');
+    setShowAddStaffModal(false);
+  };
 
   // Roles & Permissions (Role / Jabatan & Hak Akses)
   const [roles, setRoles] = useState([
@@ -153,21 +184,20 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <UserCheck className="w-6 h-6 text-purple-400" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              STAFF, ROLE &amp; HAK AKSES OPERASIONAL
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Manajemen direktori karyawan, pembatasan hak akses (*RBAC*), evaluasi KPI kinerja kasir, dan perumusan SOP kerja cerdas AI.
-          </p>
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <UserCheck className="w-6 h-6 text-purple-400" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            STAFF, ROLE &amp; HAK AKSES OPERASIONAL
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Manajemen direktori karyawan, pembatasan hak akses (*RBAC*), evaluasi KPI kinerja kasir, dan perumusan SOP kerja cerdas AI.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('daftar_staff')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
@@ -213,7 +243,6 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
             <span>AI Setting Job Staff</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: DAFTAR STAFF */}
       {activeSub === 'daftar_staff' && (
@@ -230,7 +259,7 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
               />
             </div>
             <button
-              onClick={() => alert('Form input staf karyawan baru dibuka')}
+              onClick={() => setShowAddStaffModal(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -429,6 +458,105 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal: Tambah Staff Baru */}
+      {showAddStaffModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Tambah Karyawan / Staf Baru</h3>
+              </div>
+              <button
+                onClick={() => setShowAddStaffModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveStaff} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nama Lengkap Karyawan *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Muhammad Irfan"
+                  value={newStaffName}
+                  onChange={(e) => setNewStaffName(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Jabatan / Role</label>
+                  <select
+                    value={newStaffRole}
+                    onChange={(e) => setNewStaffRole(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="Kasir Reguler">Kasir Reguler</option>
+                    <option value="Kasir Senior (Head Cashier)">Kasir Senior (Head Cashier)</option>
+                    <option value="Staf Gudang & Bongkar">Staf Gudang & Bongkar</option>
+                    <option value="Kurir Pengantar Galon & Dus">Kurir Pengantar Galon & Dus</option>
+                    <option value="Supervisor Shift">Supervisor Shift</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Shift Kerja</label>
+                  <select
+                    value={newStaffShift}
+                    onChange={(e) => setNewStaffShift(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="Pagi (07:30 - 15:00)">Pagi (07:30 - 15:00)</option>
+                    <option value="Sore (15:00 - 22:30)">Sore (15:00 - 22:30)</option>
+                    <option value="Reguler (08:00 - 17:00)">Reguler (08:00 - 17:00)</option>
+                    <option value="On-Demand Antar">On-Demand Antar</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Cabang Penempatan</label>
+                <select
+                  value={newStaffOutlet}
+                  onChange={(e) => setNewStaffOutlet(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="RiskCart Flagship Store (Pusat)">RiskCart Flagship Store (Pusat)</option>
+                  <option value="RiskCart Express Tebet">RiskCart Express Tebet</option>
+                  <option value="Central Distribution Center (CDC)">Central Distribution Center (CDC)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">No. WhatsApp / HP</label>
+                <input
+                  type="text"
+                  placeholder="+62 8..."
+                  value={newStaffPhone}
+                  onChange={(e) => setNewStaffPhone(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStaffModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition shadow-lg"
+                >
+                  Simpan Staf
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

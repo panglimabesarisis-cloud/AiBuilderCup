@@ -7,17 +7,24 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Product, Transaction, RestockRecommendation } from '../../types';
+import { INITIAL_PRODUCTS, INITIAL_TRANSACTIONS } from '../../services/dataSeeder';
 import confetti from 'canvas-confetti';
 import {
   Sparkles,
   Boxes,
   TrendingDown,
+  TrendingUp,
   RefreshCw,
   CheckCircle,
   AlertOctagon,
   ArrowRight,
   PackageCheck,
   DollarSign,
+  Eye,
+  X,
+  Clock,
+  Layers,
+  ShieldAlert,
 } from 'lucide-react';
 
 export const RestockAdvisor: React.FC = () => {
@@ -27,24 +34,36 @@ export const RestockAdvisor: React.FC = () => {
   const [executiveSummary, setExecutiveSummary] = useState<string>('');
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
   const [restockedSuccess, setRestockedSuccess] = useState<string | null>(null);
+  const [selectedRecModal, setSelectedRecModal] = useState<RestockRecommendation | null>(null);
+  const [isOverviewModalOpen, setIsOverviewModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    // 1. Subscribe to products collection
     const unsubP = onSnapshot(
       collection(db, 'products'),
       (snap) => {
-        const prods: Product[] = [];
-        snap.forEach((d) => prods.push({ id: d.id, ...(d.data() as Omit<Product, 'id'>) }));
-        setProducts(prods);
+        if (!snap.empty) {
+          const prods: Product[] = [];
+          snap.forEach((d) => prods.push({ id: d.id, ...(d.data() as Omit<Product, 'id'>) }));
+          setProducts(prods);
+        } else {
+          setProducts(INITIAL_PRODUCTS as Product[]);
+        }
       },
       (error) => handleFirestoreError(error, OperationType.GET, 'products')
     );
 
+    // 2. Subscribe to transactions collection
     const unsubT = onSnapshot(
       collection(db, 'transactions'),
       (snap) => {
-        const txs: Transaction[] = [];
-        snap.forEach((d) => txs.push({ id: d.id, ...(d.data() as Omit<Transaction, 'id'>) }));
-        setTransactions(txs);
+        if (!snap.empty) {
+          const txs: Transaction[] = [];
+          snap.forEach((d) => txs.push({ id: d.id, ...(d.data() as Omit<Transaction, 'id'>) }));
+          setTransactions(txs);
+        } else {
+          setTransactions(INITIAL_TRANSACTIONS);
+        }
       },
       (error) => handleFirestoreError(error, OperationType.GET, 'transactions')
     );
@@ -55,29 +74,70 @@ export const RestockAdvisor: React.FC = () => {
     };
   }, []);
 
-  // Fetch or Refresh AI Restock Recommendations
+  // Fetch or Refresh AI Restock Recommendations powered by Gemini 2.5 Flash
   const fetchAiRestockPlan = async () => {
     if (products.length === 0) return;
     setLoadingAi(true);
     try {
+      // Compute 7-day sales velocity per product from transactions
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const recent7dTx = transactions.filter((t) => {
+        const ts = t.createdAt ? new Date(t.createdAt).getTime() : 0;
+        return ts >= sevenDaysAgo;
+      });
+
+      const unitsSold7dMap: Record<string, number> = {};
+      recent7dTx.forEach((tx) => {
+        if (Array.isArray(tx.items)) {
+          tx.items.forEach((item: any) => {
+            const pId = item.productId || item.id;
+            const qty =
+              item.unitsDeducted ||
+              (item.packageType === 'carton' ? (item.quantityOrdered || 1) * 24 : item.quantityOrdered || 1);
+            if (pId) {
+              unitsSold7dMap[pId] = (unitsSold7dMap[pId] || 0) + Number(qty || 0);
+            }
+          });
+        }
+      });
+
+      // Prepare current stock levels and 7-day velocity arrays
+      const currentStockLevels = products.map((p) => ({
+        id: p.id,
+        productId: p.id,
+        name: p.name,
+        sku: p.sku || '',
+        category: p.category || '',
+        currentStockUnits: p.stockInUnits,
+        piecesPerCarton: p.piecesPerCarton || 1,
+        costPerUnit: p.costPerUnit || 0,
+        pricePerUnit: p.pricePerUnit || 0,
+        minStockAlert: p.minStockAlert || 10,
+        salesVelocity7d: unitsSold7dMap[p.id] || 0,
+        dailyVelocity: Number(((unitsSold7dMap[p.id] || 0) / 7).toFixed(1)),
+      }));
+
+      const salesVelocity7d = products.map((p) => ({
+        productId: p.id,
+        productName: p.name,
+        unitsSold7d: unitsSold7dMap[p.id] || 0,
+        dailyAverageVelocity: Number(((unitsSold7dMap[p.id] || 0) / 7).toFixed(1)),
+      }));
+
       const res = await fetch('/api/ai/restock-advisor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          products: products.map((p) => ({
-            id: p.id,
-            name: p.name,
-            currentStockUnits: p.stockInUnits,
-            piecesPerCarton: p.piecesPerCarton,
-            costPerUnit: p.costPerUnit,
-            minStockAlert: p.minStockAlert,
-          })),
-          recentTransactions: transactions.slice(0, 10),
+          currentStockLevels,
+          salesVelocity7d,
+          products: currentStockLevels,
+          salesVelocity: salesVelocity7d,
+          recentTransactions: transactions.slice(0, 30),
         }),
       });
 
       const data = await res.json();
-      if (data.recommendations) {
+      if (data.recommendations && Array.isArray(data.recommendations)) {
         setRecommendations(data.recommendations);
         setExecutiveSummary(data.executiveSummary || '');
       }
@@ -112,6 +172,9 @@ export const RestockAdvisor: React.FC = () => {
 
       // Remove from active recommendations list
       setRecommendations((prev) => prev.filter((r) => r.productId !== rec.productId));
+      if (selectedRecModal?.productId === rec.productId) {
+        setSelectedRecModal(null);
+      }
 
       // Trigger festive celebration
       try {
@@ -151,29 +214,43 @@ export const RestockAdvisor: React.FC = () => {
             <h1 className="text-2xl font-bold tracking-tight text-white">AI Restock Advisor</h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1">
               <Sparkles className="w-3 h-3" />
-              Smart Packaging Optimizer
+              Gemini 2.5 Flash Demand Planning
             </span>
           </div>
           <p className="text-sm text-zinc-400 mt-1">
-            Intelligent inventory forecasting calculating stockout runout dates and wholesale whole-carton replenishment.
+            Intelligent inventory forecasting calculating 7-day sales velocity and wholesale carton replenishment.
           </p>
         </div>
 
-        <button
-          onClick={fetchAiRestockPlan}
-          disabled={loadingAi}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loadingAi ? 'animate-spin' : ''}`} />
-          Recalculate AI Forecast
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {recommendations.length > 0 && (
+            <button
+              onClick={() => setIsOverviewModalOpen(true)}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition"
+            >
+              <Eye className="w-3.5 h-3.5 text-blue-400" />
+              Buka Modal AI Plan
+            </button>
+          )}
+
+          <button
+            onClick={fetchAiRestockPlan}
+            disabled={loadingAi}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition shadow-lg shadow-blue-600/20"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingAi ? 'animate-spin' : ''}`} />
+            {loadingAi ? 'Menganalisis Demand...' : 'Recalculate AI Forecast'}
+          </button>
+        </div>
       </div>
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
           <div className="text-xs text-zinc-400 font-medium">Restock Capital Required</div>
-          <div className="text-2xl font-black text-white mt-1">${totalRestockBudget.toFixed(2)}</div>
+          <div className="text-2xl font-black text-white mt-1">
+            Rp {Math.round(totalRestockBudget).toLocaleString('id-ID')}
+          </div>
           <div className="text-xs text-zinc-500 mt-1">Projected wholesale PO amount</div>
         </div>
 
@@ -196,9 +273,9 @@ export const RestockAdvisor: React.FC = () => {
       {executiveSummary && (
         <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/30 to-purple-950/20 border border-blue-800/40 text-xs text-zinc-300 leading-relaxed flex items-start gap-3">
           <Sparkles className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1">
             <strong className="text-white block mb-0.5">Gemini Executive Forecast:</strong>
-            {executiveSummary}
+            <p>{executiveSummary}</p>
           </div>
         </div>
       )}
@@ -221,7 +298,6 @@ export const RestockAdvisor: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {recommendations.map((rec) => {
-              const prod = products.find((p) => p.id === rec.productId);
               const isUrgent = rec.urgency === 'urgent';
 
               return (
@@ -267,7 +343,7 @@ export const RestockAdvisor: React.FC = () => {
                           +{rec.suggestedCartons} Cartons
                         </div>
                         <div className="text-[11px] text-zinc-400">
-                          (= {rec.suggestedCartons * rec.piecesPerCarton} loose units)
+                          (= {rec.suggestedCartons * (rec.piecesPerCarton || 1)} loose units)
                         </div>
                       </div>
 
@@ -276,7 +352,7 @@ export const RestockAdvisor: React.FC = () => {
                           Estimated Cost
                         </div>
                         <div className="text-lg font-bold text-white mt-0.5 font-mono">
-                          ${(rec.estimatedCost || 0).toFixed(2)}
+                          Rp {Math.round(rec.estimatedCost || 0).toLocaleString('id-ID')}
                         </div>
                         <div className="text-[10px] text-zinc-500">
                           at wholesale COGS
@@ -290,19 +366,29 @@ export const RestockAdvisor: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* 1-Click Order Button */}
-                  <div className="mt-5 pt-3 border-t border-zinc-800 flex items-center justify-between">
-                    <span className="text-[11px] text-zinc-500">
-                      Multiplier: 1 Dus = {rec.piecesPerCarton} Pcs
+                  {/* Actions Bar */}
+                  <div className="mt-5 pt-3 border-t border-zinc-800 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-zinc-500 truncate">
+                      1 Dus = {rec.piecesPerCarton || 1} Pcs
                     </span>
 
-                    <button
-                      onClick={() => handleApplyRestock(rec)}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-600/20"
-                    >
-                      <PackageCheck className="w-4 h-4" />
-                      Approve Restock PO
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedRecModal(rec)}
+                        className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-zinc-700 transition flex items-center gap-1.5"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-blue-400" />
+                        Detail Modal
+                      </button>
+
+                      <button
+                        onClick={() => handleApplyRestock(rec)}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-600/20"
+                      >
+                        <PackageCheck className="w-4 h-4" />
+                        Approve PO
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -310,6 +396,207 @@ export const RestockAdvisor: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* UI MODAL: Single Item Restock Detail Modal */}
+      {selectedRecModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base leading-tight">
+                    {selectedRecModal.productName}
+                  </h3>
+                  <span className="text-xs text-zinc-400">
+                    AI Demand Planning & Whole-Carton Allocation
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedRecModal(null)}
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* Urgency Badge & Status */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert
+                    className={`w-4 h-4 ${
+                      selectedRecModal.urgency === 'urgent' ? 'text-amber-400' : 'text-blue-400'
+                    }`}
+                  />
+                  <span className="text-xs font-medium text-zinc-300">Tingkat Urgensi:</span>
+                </div>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                    selectedRecModal.urgency === 'urgent'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                  }`}
+                >
+                  {selectedRecModal.urgency}
+                </span>
+              </div>
+
+              {/* Demand Metrics Grid */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <span className="text-zinc-500 block">Stok Saat Ini</span>
+                  <strong className="text-white text-sm font-mono mt-0.5 block">
+                    {selectedRecModal.currentStockUnits} Units
+                  </strong>
+                </div>
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <span className="text-zinc-500 block">Kemasan Grosir</span>
+                  <strong className="text-blue-400 text-sm font-mono mt-0.5 block">
+                    1 Dus = {selectedRecModal.piecesPerCarton || 1} Pcs
+                  </strong>
+                </div>
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <span className="text-zinc-500 block">Rekomendasi Pembelian</span>
+                  <strong className="text-emerald-400 text-sm font-mono mt-0.5 block">
+                    +{selectedRecModal.suggestedCartons} Dus ({selectedRecModal.suggestedCartons * (selectedRecModal.piecesPerCarton || 1)} pcs)
+                  </strong>
+                </div>
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <span className="text-zinc-500 block">Estimasi Modal HPP</span>
+                  <strong className="text-white text-sm font-mono mt-0.5 block">
+                    Rp {Math.round(selectedRecModal.estimatedCost || 0).toLocaleString('id-ID')}
+                  </strong>
+                </div>
+              </div>
+
+              {/* AI Explanation / Rationale */}
+              <div className="p-4 rounded-xl bg-blue-950/20 border border-blue-900/40 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-blue-400 text-xs font-bold">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Justifikasi Gemini Demand Engine:</span>
+                </div>
+                <p className="text-xs text-zinc-300 leading-relaxed italic">
+                  &quot;{selectedRecModal.aiRationale}&quot;
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-5 border-t border-zinc-800 bg-zinc-950/50 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setSelectedRecModal(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition"
+              >
+                Tutup
+              </button>
+              <button
+                onClick={() => handleApplyRestock(selectedRecModal)}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-600/20"
+              >
+                <PackageCheck className="w-4 h-4" />
+                Setujui & Buat Purchase Order
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UI MODAL: All AI Restock Recommendations Overview Modal */}
+      {isOverviewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <Boxes className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">
+                    Ringkasan Matriks Restock AI
+                  </h3>
+                  <span className="text-xs text-zinc-400">
+                    Daftar rekomendasi pengadaan dus grosir lengkap ({recommendations.length} produk)
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsOverviewModalOpen(false)}
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              <div className="p-3.5 rounded-xl bg-blue-950/20 border border-blue-900/30 text-xs text-zinc-300">
+                <strong className="text-white block mb-1">Executive Demand Summary:</strong>
+                <p>{executiveSummary || 'Semua rekomendasi dioptimalkan untuk pencegahan kehabisan stok ritel.'}</p>
+              </div>
+
+              <div className="space-y-2">
+                {recommendations.map((rec) => (
+                  <div
+                    key={rec.productId}
+                    className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white truncate">{rec.productName}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold uppercase ${
+                            rec.urgency === 'urgent'
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'bg-blue-500/20 text-blue-400'
+                          }`}
+                        >
+                          {rec.urgency}
+                        </span>
+                      </div>
+                      <span className="text-zinc-500 text-[11px] block mt-0.5">
+                        Stok: {rec.currentStockUnits} unit &bull; Order: +{rec.suggestedCartons} Dus
+                      </span>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="font-mono text-emerald-400 font-bold">
+                        Rp {Math.round(rec.estimatedCost || 0).toLocaleString('id-ID')}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setIsOverviewModalOpen(false);
+                          handleApplyRestock(rec);
+                        }}
+                        className="mt-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium"
+                      >
+                        Approve PO &rarr;
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-zinc-800 bg-zinc-950/50 flex items-center justify-between">
+              <span className="text-xs text-zinc-400">
+                Total Budget: <strong className="text-white">Rp {Math.round(totalRestockBudget).toLocaleString('id-ID')}</strong> ({totalCartonsNeeded} Dus)
+              </span>
+              <button
+                onClick={() => setIsOverviewModalOpen(false)}
+                className="px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold"
+              >
+                Tutup Modal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

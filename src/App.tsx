@@ -18,7 +18,7 @@ import { RestockAdvisor } from './components/pos/RestockAdvisor';
 import { ClientPwaApp } from './components/pwa/ClientPwaApp';
 import { PwaSettings } from './components/admin/PwaSettings';
 import { AdminDashboard } from './components/admin/AdminDashboard';
-import { seedDemoDataIfEmpty } from './services/dataSeeder';
+import { seedDemoDataIfEmpty, seedReportDemoIfNeeded } from './services/dataSeeder';
 
 import { ProductCartonTabType } from './components/common/Sidebar';
 import { AIHubModule } from './components/modules/AIHubModule';
@@ -35,14 +35,15 @@ import { OnlineOrderModule } from './components/modules/OnlineOrderModule';
 import { PWASettingsModule } from './components/modules/PWASettingsModule';
 import { POSSettingsModule } from './components/modules/POSSettingsModule';
 import { PaymentIntegrationModule } from './components/modules/PaymentIntegrationModule';
-import { LanguageProvider } from './context/LanguageContext';
+import { OrdersModule } from './components/modules/OrdersModule';
+import { LanguageProvider, useLanguage } from './context/LanguageContext';
 
-export default function App() {
+function AppContent() {
+  const { currencyMode, setCurrencyMode } = useLanguage();
   const [activeTab, setActiveTab] = useState<string>('pos_machine'); // Default to POS Machine
   const [activeSubModule, setActiveSubModule] = useState<string>('ai_master');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
-  const [currencyMode, setCurrencyMode] = useState<'IDR' | 'USD'>('IDR');
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
   const [productSubTab, setProductSubTab] = useState<ProductCartonTabType>('list');
@@ -56,15 +57,37 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Sync URL query parameter (?agent=<slug>) on initial load and history popstate navigation
+  useEffect(() => {
+    const handleUrlSync = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const agentSlug = searchParams.get('agent');
+        if (agentSlug) {
+          setActiveTab('module_ai');
+          setActiveSubModule(agentSlug);
+        }
+      } catch (err) {
+        // Safe fallback
+      }
+    };
+
+    handleUrlSync();
+    window.addEventListener('popstate', handleUrlSync);
+    return () => window.removeEventListener('popstate', handleUrlSync);
+  }, []);
+
   useEffect(() => {
     // Automatically seed Firestore with initial demo catalog and transactions if empty
-    seedDemoDataIfEmpty().catch((err) => {
-      console.warn('Initial seed error:', err);
-    });
+    seedDemoDataIfEmpty()
+      .then(() => seedReportDemoIfNeeded())
+      .catch((err) => {
+        console.warn('Initial seed error:', err);
+      });
   }, []);
 
   const handleToggleSidebar = () => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    if (typeof window !== 'undefined' && window.innerWidth < 1280) {
       setIsMobileSidebarOpen((prev) => !prev);
     } else {
       setIsSidebarCollapsed((prev) => !prev);
@@ -72,8 +95,7 @@ export default function App() {
   };
 
   return (
-    <LanguageProvider>
-      <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 font-sans antialiased selection:bg-blue-600 selection:text-white overflow-hidden">
+    <div className="h-dvh flex flex-col bg-zinc-950 text-zinc-100 font-sans antialiased selection:bg-blue-600 selection:text-white overflow-hidden">
       {/* 1. STICKY TOP HEADER - Placed at the very top */}
       <Navbar
         activeTab={activeTab}
@@ -114,7 +136,7 @@ export default function App() {
         {/* Content Area - class="flex-1 w-full overflow-hidden" directly below header */}
         <div className="flex-1 w-full overflow-hidden flex flex-col min-w-0">
           {activeTab === 'pos_machine' ? (
-            <main className="flex-1 w-full overflow-hidden">
+            <main className="flex-1 w-full overflow-hidden min-h-0">
               <PosMachine
                 onNavigateTab={setActiveTab}
                 currencyMode={currencyMode}
@@ -132,6 +154,12 @@ export default function App() {
                       setActiveTab('products');
                       setProductViewMode('add_product');
                     }}
+                  />
+                )}
+                {activeTab === 'orders' && (
+                  <OrdersModule
+                    currencyMode={currencyMode}
+                    onNavigateTab={setActiveTab}
                   />
                 )}
                 {activeTab === 'transactions' && <TransactionDashboard />}
@@ -276,6 +304,13 @@ export default function App() {
       {/* Offline Status Badge */}
       <OfflineIndicator />
     </div>
-  </LanguageProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
   );
 }

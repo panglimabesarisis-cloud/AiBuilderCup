@@ -5,6 +5,8 @@ import {
   addDoc,
   doc,
   updateDoc,
+  setDoc,
+  writeBatch,
   query,
   where,
   orderBy,
@@ -68,12 +70,38 @@ interface PosMachineProps {
   setCurrencyMode?: (mode: 'IDR' | 'USD') => void;
 }
 
+const ProductThumb: React.FC<{ src?: string; alt: string }> = ({ src, alt }) => {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (!src || failed) {
+    return (
+      <div className="w-16 h-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+        <Store className="w-8 h-8" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+      loading="lazy"
+    />
+  );
+};
+
 export const PosMachine: React.FC<PosMachineProps> = ({
   onNavigateTab,
   currencyMode: propCurrencyMode,
   setCurrencyMode: propSetCurrencyMode,
 }) => {
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS as Product[]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -86,6 +114,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   // Cashier Cart & Calculation State
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string>('General Walk-in Customer');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'debt' | 'cod' | 'qris'>('cash');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('0');
   const [calcDisplay, setCalcDisplay] = useState<string>('');
@@ -208,14 +237,57 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   // Subscribe to Products & Real-time Incoming PWA Orders
   useEffect(() => {
     const unsubProducts = onSnapshot(
-      collection(db, 'products'),
-      (snapshot) => {
+      collection(db, 'stores/store_001/products'),
+      async (snapshot) => {
+        if (snapshot.empty) {
+          // If Firestore collection stores/store_001/products is empty, populate from INITIAL_PRODUCTS once
+          try {
+            const batch = writeBatch(db);
+            for (const prod of INITIAL_PRODUCTS) {
+              const pRef = doc(db, 'stores/store_001/products', prod.id);
+              batch.set(pRef, {
+                ...prod,
+                storeId: 'store_001',
+                price: prod.pricePerUnit,
+                costPrice: prod.costPerUnit,
+                stock: prod.stockInUnits,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              });
+            }
+            await batch.commit();
+          } catch (e) {
+            console.warn('Auto-seed stores/store_001/products notice:', e);
+            setProducts(INITIAL_PRODUCTS as Product[]);
+          }
+          return;
+        }
+
         const prods: Product[] = [];
-        snapshot.forEach((d) => prods.push({ id: d.id, ...(d.data() as Omit<Product, 'id'>) }));
+        snapshot.forEach((d) => {
+          const data = d.data() as any;
+          prods.push({
+            id: d.id,
+            storeId: data.storeId || 'store_001',
+            name: data.name || '',
+            sku: data.sku || d.id,
+            category: data.category || 'MINERAL',
+            barcode: data.barcode || '',
+            piecesPerCarton: Number(data.piecesPerCarton || 1),
+            stockInUnits: Number(data.stockInUnits ?? data.stock ?? 0),
+            costPerUnit: Number(data.costPerUnit ?? data.costPrice ?? 0),
+            pricePerUnit: Number(data.pricePerUnit ?? data.price ?? 0),
+            pricePerCarton: Number(data.pricePerCarton ?? data.price ?? 0),
+            minStockAlert: Number(data.minStockAlert ?? data.minStock ?? 10),
+            imageUrl: data.imageUrl || '',
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          });
+        });
         setProducts(prods);
       },
       (error) => {
-        console.warn('Products onSnapshot error, retaining catalog fallback:', error);
+        console.warn('stores/store_001/products onSnapshot error:', error);
       }
     );
 
@@ -384,8 +456,8 @@ export const PosMachine: React.FC<PosMachineProps> = ({
     setCashReceivedInput(String(exact));
   };
 
-  // Complete Order
-  const handlePayOrder = async () => {
+  // Complete Order / Payment
+  const handlePayment = async () => {
     if (cart.length === 0) return;
     setIsProcessing(true);
 
@@ -399,30 +471,35 @@ export const PosMachine: React.FC<PosMachineProps> = ({
       }));
 
       // Call server AI anti-fraud
-      const aiRes = await fetch('/api/ai/anti-fraud', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          channel: 'pos',
-          totalAmount: total,
-          items: itemsPayload,
-          customerPhone: 'Walk-in Cashier Counter',
-          gpsAccuracy: 5,
-        }),
-      });
-
-      const aiData = await aiRes.json();
+      let aiData: any = {};
+      try {
+        const aiRes = await fetch('/api/ai/anti-fraud', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channel: 'pos',
+            totalAmount: total,
+            items: itemsPayload,
+            customerPhone: 'Walk-in Cashier Counter',
+            gpsAccuracy: 5,
+          }),
+        });
+        aiData = await aiRes.json();
+      } catch (e) {
+        console.warn('AI anti-fraud check notice:', e);
+      }
 
       const newTx: Omit<Transaction, 'id'> = {
-        storeId: DEMO_STORE_ID,
+        storeId: 'store_001',
+        outletId: 'out_1',
         channel: 'pos',
         customerName: selectedCustomer,
         totalAmount: total,
         totalCost: Number((total * 0.65).toFixed(2)),
         paymentMethod: paymentMethod === 'debt' ? 'card' : paymentMethod === 'cod' ? 'cash' : paymentMethod,
         status: 'completed',
-        fraudScore: aiData.fraudScore || 5,
-        fraudFlags: aiData.fraudFlags || ['VERIFIED_POS_COUNTER'],
+        fraudScore: aiData?.fraudScore || 5,
+        fraudFlags: aiData?.fraudFlags || ['VERIFIED_POS_COUNTER'],
         riskLevel: 'clean',
         distanceToStoreMeters: 2,
         gpsAccuracy: 5,
@@ -431,7 +508,8 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      const docRef = await addDoc(collection(db, 'transactions'), newTx);
+      // Save to stores/store_001/transactions using addDoc
+      const docRef = await addDoc(collection(db, 'stores/store_001/transactions'), newTx);
 
       // Save item lines
       for (const item of cart) {
@@ -439,10 +517,10 @@ export const PosMachine: React.FC<PosMachineProps> = ({
           (item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit) *
           item.quantity;
         const unitsDeducted =
-          (item.packageType === 'carton' ? item.product.piecesPerCarton : 1) * item.quantity;
+          (item.packageType === 'carton' ? (item.product.piecesPerCarton || 1) : 1) * item.quantity;
 
-        await addDoc(collection(db, 'transactions', docRef.id, 'items'), {
-          storeId: DEMO_STORE_ID,
+        const lineItem = {
+          storeId: 'store_001',
           transactionId: docRef.id,
           productId: item.product.id,
           productName: item.product.name,
@@ -451,19 +529,51 @@ export const PosMachine: React.FC<PosMachineProps> = ({
           unitsDeducted,
           unitPrice: item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit,
           subtotal: Number(itemSubtotal.toFixed(2)),
-        });
+        };
 
-        // Deduct inventory
-        const prodRef = doc(db, 'products', item.product.id);
+        await addDoc(collection(db, 'stores/store_001/transactions', docRef.id, 'items'), lineItem);
+
+        // Deduct inventory in stores/store_001/products as well as products
         const currentProd = products.find((p) => p.id === item.product.id);
         if (currentProd) {
           const nextStock = Math.max(0, currentProd.stockInUnits - unitsDeducted);
-          await updateDoc(prodRef, {
-            stockInUnits: nextStock,
-            updatedAt: new Date().toISOString(),
-          });
+          try {
+            await updateDoc(doc(db, 'stores/store_001/products', item.product.id), {
+              stockInUnits: nextStock,
+              updatedAt: new Date().toISOString(),
+            });
+          } catch (e) {}
+          try {
+            await updateDoc(doc(db, 'products', item.product.id), {
+              stockInUnits: nextStock,
+              updatedAt: new Date().toISOString(),
+            });
+          } catch (e) {}
         }
       }
+
+      // Also mirror to global transactions collection for full cross-module compatibility
+      try {
+        await setDoc(doc(db, 'transactions', docRef.id), newTx);
+        for (const item of cart) {
+          const itemSubtotal =
+            (item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit) *
+            item.quantity;
+          const unitsDeducted =
+            (item.packageType === 'carton' ? (item.product.piecesPerCarton || 1) : 1) * item.quantity;
+          await addDoc(collection(db, 'transactions', docRef.id, 'items'), {
+            storeId: 'store_001',
+            transactionId: docRef.id,
+            productId: item.product.id,
+            productName: item.product.name,
+            packageType: item.packageType,
+            quantityOrdered: item.quantity,
+            unitsDeducted,
+            unitPrice: item.packageType === 'carton' ? item.product.pricePerCarton : item.product.pricePerUnit,
+            subtotal: Number(itemSubtotal.toFixed(2)),
+          });
+        }
+      } catch (e) {}
 
       setCompletedTxReceipt({
         id: docRef.id,
@@ -473,16 +583,19 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         change,
       });
 
+      // Reset the cart state
       handleClearCart();
       try {
         confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
       } catch (e) {}
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'transactions');
+      handleFirestoreError(error, OperationType.CREATE, 'stores/store_001/transactions');
     } finally {
       setIsProcessing(false);
     }
   };
+
+  const handlePayOrder = handlePayment;
 
   // Action on incoming PWA order (Fulfill or Reject)
   const handlePwaAction = async (action: 'approve' | 'reject', targetOrder?: Transaction) => {
@@ -613,12 +726,12 @@ export const PosMachine: React.FC<PosMachineProps> = ({
   };
 
   return (
-    <div className="flex w-full h-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
+    <div className="flex flex-col lg:flex-row w-full h-full bg-zinc-950 text-zinc-100 font-sans overflow-y-auto overflow-x-hidden lg:overflow-hidden">
       {/* MAIN CENTER CONTENT & PRODUCT GRID */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <div className="flex-none lg:flex-1 flex flex-col min-w-0 lg:overflow-y-auto">
         {/* Top Header Bar */}
-        <div className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
 
             <h1 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
               <span>RiskCart POS Terminal</span>
@@ -638,30 +751,15 @@ export const PosMachine: React.FC<PosMachineProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Quick Action Icons */}
-            <div className="flex items-center gap-1 text-zinc-400">
-              <button className="p-1.5 hover:text-white hover:bg-zinc-800 rounded-lg">
-                <Search className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setCurrencyMode(currencyMode === 'IDR' ? 'USD' : 'IDR')}
-                className="px-2 py-1 text-[11px] font-bold rounded bg-zinc-800 text-zinc-300 hover:text-white"
-                title="Toggle Currency IDR / USD"
-              >
-                {currencyMode === 'IDR' ? 'Rp IDR' : '$ USD'}
-              </button>
-              <button className="relative p-1.5 hover:text-white hover:bg-zinc-800 rounded-lg">
-                <Bell className="w-4 h-4" />
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" />
-              </button>
-              <button className="p-1.5 hover:text-white hover:bg-zinc-800 rounded-lg">
-                <Calendar className="w-4 h-4" />
-              </button>
-              <button className="p-1.5 hover:text-white hover:bg-zinc-800 rounded-lg">
-                <Maximize2 className="w-4 h-4" />
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {/* Currency Button */}
+            <button
+              onClick={() => setCurrencyMode(currencyMode === 'IDR' ? 'USD' : 'IDR')}
+              className="px-2 py-1 text-[11px] font-bold rounded bg-zinc-800 text-zinc-300 hover:text-white"
+              title="Toggle Currency IDR / USD"
+            >
+              {currencyMode === 'IDR' ? 'Rp IDR' : '$ USD'}
+            </button>
 
             {/* User Profile */}
             <div className="flex items-center gap-2 pl-2 border-l border-zinc-800 text-xs">
@@ -736,7 +834,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         )}
 
         {/* Category Tabs Strip (Exactly like screenshot) */}
-        <div className="px-6 py-3 bg-zinc-950 border-b border-zinc-850 flex items-center gap-2 overflow-x-auto shrink-0">
+        <div className="px-4 sm:px-6 py-3 bg-zinc-950 border-b border-zinc-850 flex items-center gap-2 overflow-x-auto shrink-0">
           {categoryTabs.map((cat) => (
             <button
               key={cat}
@@ -753,11 +851,12 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         </div>
 
         {/* Search, Filter & Customer Toolbar */}
-        <div className="px-6 py-3 bg-zinc-950 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            <div className="relative w-full">
+        <div className="px-4 sm:px-6 py-3 bg-zinc-950 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2 flex-1 max-w-md min-w-0">
+            <div className="relative w-full min-w-0">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-zinc-500" />
               <input
+                ref={searchInputRef}
                 type="text"
                 placeholder="Search product name or SKU..."
                 value={searchTerm}
@@ -769,7 +868,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 focus:outline-none"
+              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 focus:outline-none hidden sm:block shrink-0"
             >
               <option value="ALL">ALL CATEGORIES</option>
               <option value="Mineral Dus">Mineral Dus (Carton)</option>
@@ -788,8 +887,8 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         </div>
 
         {/* Product Cards Grid */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 gap-5">
+        <div className="flex-1 p-4 sm:p-6 lg:overflow-y-auto">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3 sm:gap-5">
             {filteredProducts.map((p) => {
               const currentQty = getCartQty(p.id);
               const isCarton = p.category === 'Mineral Dus' || p.name.includes('(Dus)');
@@ -802,18 +901,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
                 >
                   {/* Image Container with high aspect ratio */}
                   <div className="relative aspect-[4/3] bg-zinc-950 flex items-center justify-center overflow-hidden">
-                    {p.imageUrl ? (
-                      <img
-                        src={p.imageUrl}
-                        alt={p.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                        <Store className="w-8 h-8" />
-                      </div>
-                    )}
+                    <ProductThumb src={p.imageUrl} alt={p.name} />
 
                     {/* Carton or Stock Pill */}
                     {isCarton && (
@@ -824,7 +912,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
                   </div>
 
                   {/* Product Details & Stepper */}
-                  <div className="p-4 flex flex-col justify-between flex-1">
+                  <div className="p-3 sm:p-4 flex flex-col justify-between flex-1 min-w-0">
                     <div>
                       <h3 className="text-xs font-bold text-white leading-snug line-clamp-2">
                         {p.name}
@@ -867,7 +955,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
       </div>
 
       {/* 3. RIGHT CASHIER REGISTER & NUMPAD (Exact visual replica of right panel in PosRiskCart.jpg) */}
-      <aside className="w-80 md:w-96 shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col justify-between overflow-y-auto">
+      <aside id="pos-cart" className="w-full lg:w-96 shrink-0 bg-zinc-900 border-t lg:border-t-0 lg:border-l border-zinc-800 flex flex-col justify-between lg:overflow-y-auto">
         <div className="p-4 space-y-3">
           {/* Header & Customer Input Field */}
           <div className="space-y-2 pb-2.5 border-b border-zinc-800">
@@ -1212,7 +1300,7 @@ export const PosMachine: React.FC<PosMachineProps> = ({
               Exact Cash
             </button>
             <button
-              onClick={handlePayOrder}
+              onClick={handlePayment}
               disabled={isProcessing || cart.length === 0}
               className="py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition disabled:opacity-50 shadow-md shadow-blue-600/30"
             >
@@ -1353,6 +1441,26 @@ export const PosMachine: React.FC<PosMachineProps> = ({
           </div>
         </div>
       </aside>
+
+      {/* Sticky Bottom Bar for <lg screens */}
+      <div className="lg:hidden sticky bottom-0 z-20 shrink-0 bg-zinc-900/95 backdrop-blur border-t border-zinc-800 px-4 py-2.5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs text-zinc-400">
+            {cart.reduce((n, i) => n + i.quantity, 0)} item
+          </span>
+          <span className="font-bold text-white truncate">
+            {formatMoney(total)}
+          </span>
+        </div>
+        <button
+          onClick={() => {
+            document.getElementById('pos-cart')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+          className="shrink-0 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+        >
+          Lihat Keranjang
+        </button>
+      </div>
 
       {/* Cashier Digital Receipt Modal */}
       {completedTxReceipt && (

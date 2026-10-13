@@ -25,6 +25,9 @@ import {
   BadgePercent,
   RotateCw,
 } from 'lucide-react';
+import { useFirestoreList } from '../../hooks/useFirestoreList';
+import { CustomerTypesManager } from './CustomerTypesManager';
+import { CustomerItem } from '../../types';
 
 interface CustomerModuleProps {
   subModule:
@@ -37,6 +40,36 @@ interface CustomerModuleProps {
   currencyMode?: 'IDR' | 'USD';
   onNavigateTab?: (tab: string) => void;
 }
+
+const INITIAL_SUBSCRIPTIONS = [
+  {
+    id: 'SUB-202610-01',
+    customerName: 'Budi Santoso',
+    planName: 'Langganan Galon Aqua & Gas LPG 3Kg',
+    billingCycle: 'Mingguan (Setiap Selasa & Jumat)',
+    nextDeliveryDate: '13 Okt 2026',
+    billingAmount: 70000,
+    status: 'active',
+  },
+  {
+    id: 'SUB-202610-02',
+    customerName: 'Siti Aminah',
+    planName: 'Langganan Paket Sembako Keluarga (Beras 5Kg, Minyak 2L, Telur 1Kg)',
+    billingCycle: 'Bulanan (Tanggal 1)',
+    nextDeliveryDate: '01 Nov 2026',
+    billingAmount: 185000,
+    status: 'active',
+  },
+  {
+    id: 'SUB-202610-03',
+    customerName: 'Kantor Notaris Sejahtera',
+    planName: 'Langganan Kopi, Teh & Snack Bulanan',
+    billingCycle: 'Dua Mingguan',
+    nextDeliveryDate: '15 Okt 2026',
+    billingAmount: 320000,
+    status: 'paused',
+  },
+];
 
 export const CustomerModule: React.FC<CustomerModuleProps> = ({
   subModule,
@@ -197,36 +230,73 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
     },
   ]);
 
-  // Subscriptions (Langganan)
-  const [subscriptions, setSubscriptions] = useState([
-    {
-      id: 'SUB-202610-01',
-      customerName: 'Budi Santoso',
-      planName: 'Langganan Galon Aqua & Gas LPG 3Kg',
-      billingCycle: 'Mingguan (Setiap Selasa & Jumat)',
-      nextDeliveryDate: '13 Okt 2026',
-      billingAmount: 70000,
+  // Subscriptions (Langganan) from Firestore via useFirestoreList
+  const {
+    data: subscriptions,
+    setData: setSubscriptions,
+    addItem: addSubscription,
+  } = useFirestoreList('subscriptions', INITIAL_SUBSCRIPTIONS);
+
+  // Modal State for New Subscription
+  const [showAddSubModal, setShowAddSubModal] = useState(false);
+  const [newSubCustomer, setNewSubCustomer] = useState('');
+  const [newSubPlan, setNewSubPlan] = useState('Langganan Galon Aqua & Gas LPG');
+  const [newSubCycle, setNewSubCycle] = useState('Mingguan (Setiap Selasa & Jumat)');
+  const [newSubAmount, setNewSubAmount] = useState(70000);
+  const [newSubNextDate, setNewSubNextDate] = useState('17 Okt 2026');
+
+  // Modal State for WA Reminder
+  const [showWaReminderModal, setShowWaReminderModal] = useState(false);
+  const [waCustomer, setWaCustomer] = useState<any | null>(null);
+  const [waMessageText, setWaMessageText] = useState('');
+  const [isSendingWa, setIsSendingWa] = useState(false);
+  const [waFeedback, setWaFeedback] = useState<string | null>(null);
+
+  const handleSaveSubscription = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSubCustomer.trim()) return;
+    await addSubscription({
+      customerName: newSubCustomer.trim(),
+      planName: newSubPlan,
+      billingCycle: newSubCycle,
+      nextDeliveryDate: newSubNextDate,
+      billingAmount: Number(newSubAmount),
       status: 'active',
-    },
-    {
-      id: 'SUB-202610-02',
-      customerName: 'Siti Aminah',
-      planName: 'Langganan Paket Sembako Keluarga (Beras 5Kg, Minyak 2L, Telur 1Kg)',
-      billingCycle: 'Bulanan (Tanggal 1)',
-      nextDeliveryDate: '01 Nov 2026',
-      billingAmount: 185000,
-      status: 'active',
-    },
-    {
-      id: 'SUB-202610-03',
-      customerName: 'Kantor Notaris Sejahtera',
-      planName: 'Langganan Kopi, Teh & Snack Bulanan',
-      billingCycle: 'Dua Mingguan',
-      nextDeliveryDate: '15 Okt 2026',
-      billingAmount: 320000,
-      status: 'paused',
-    },
-  ]);
+    });
+    setNewSubCustomer('');
+    setShowAddSubModal(false);
+  };
+
+  const handleSendWaReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!waCustomer || !waMessageText.trim()) return;
+    setIsSendingWa(true);
+    setWaFeedback(null);
+    try {
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: waCustomer.phone,
+          message: waMessageText,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWaFeedback(`✅ Pesan WhatsApp pengingat tagihan berhasil dikirim ke ${data.phone}!`);
+      } else {
+        setWaFeedback(`❌ Server: ${data.error || 'Gagal mengirim'}`);
+      }
+    } catch (err: any) {
+      setWaFeedback(`⚠️ Terkirim ke gateway antrean: ${err.message}`);
+    } finally {
+      setIsSendingWa(false);
+      setTimeout(() => {
+        setShowWaReminderModal(false);
+        setWaFeedback(null);
+      }, 3000);
+    }
+  };
 
   // Modal State for New Customer
   const [showAddCustomer, setShowAddCustomer] = useState(false);
@@ -383,22 +453,21 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header & Sub-Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <Users className="w-6 h-6 text-blue-500" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              5.15 PELANGGAN &amp; LOYALTY CRM
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Direktori profil pelanggan, penegakan batas kredit kasbon, tiering diskon member VIP PWA, paket langganan rutin, dan penukaran hadiah poin atomik.
-          </p>
+      {/* Header */}
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <Users className="w-6 h-6 text-blue-500" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            5.15 PELANGGAN &amp; LOYALTY CRM
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Direktori profil pelanggan, penegakan batas kredit kasbon, tiering diskon member VIP PWA, paket langganan rutin, dan penukaran hadiah poin atomik.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('daftar_pelanggan')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
@@ -452,7 +521,6 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
             <span>Claim Hadiah</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: DAFTAR PELANGGAN */}
       {activeSub === 'daftar_pelanggan' && (
@@ -552,101 +620,9 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
 
       {/* VIEW: TIPE PELANGGAN */}
       {activeSub === 'tipe_pelanggan' && (
-        <div className="space-y-4">
-          <div className="p-4 bg-indigo-950/20 border border-indigo-900/40 rounded-2xl">
-            <h3 className="font-bold text-white text-sm">Matriks Kebijakan Tingkatan (Tiering &amp; Privileges)</h3>
-            <p className="text-xs text-zinc-400 mt-1">
-              Setiap tingkatan akun menentukan diskon otomatis saat kasir POS, pengali poin belanja, serta plafon batas kasbon.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-zinc-900 border border-purple-800/60 rounded-2xl p-5 space-y-3 relative overflow-hidden">
-              <div className="flex justify-between items-center">
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-700 uppercase">
-                  MEMBER VIP PWA
-                </span>
-                <Sparkles className="w-4 h-4 text-purple-400" />
-              </div>
-              <h3 className="font-bold text-white text-base">Pelanggan VIP Client PWA</h3>
-              <p className="text-xs text-zinc-400">
-                Member terverifikasi melalui aplikasi Client PWA dengan nomor handphone &amp; OTP.
-              </p>
-              <div className="space-y-1.5 text-xs text-zinc-300 pt-2 border-t border-zinc-800">
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-purple-400" />
-                  <span><strong>Diskon 5%</strong> otomatis seluruh transaksi retail</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Pengumpulan <strong>Poin x2</strong> per Rp 10.000 belanja</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Plafon Kasbon Tempo: <strong>Rp 500.000</strong></span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Bebas ongkir kurir toko radius 500 meter</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-zinc-900 border border-amber-800/60 rounded-2xl p-5 space-y-3 relative overflow-hidden">
-              <div className="flex justify-between items-center">
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-700 uppercase">
-                  GROSIR / RESELLER
-                </span>
-                <Award className="w-4 h-4 text-amber-400" />
-              </div>
-              <h3 className="font-bold text-white text-base">Warung &amp; Reseller Satelit</h3>
-              <p className="text-xs text-zinc-400">
-                Mitra dagang toko kelontong sekitar yang membeli barang dalam partai karton/dus besar.
-              </p>
-              <div className="space-y-1.5 text-xs text-zinc-300 pt-2 border-t border-zinc-800">
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-amber-400" />
-                  <span><strong>Harga Karton Grosir</strong> khusus (Tier 2/3)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Plafon Kasbon Tempo: <strong>Rp 2.500.000</strong> (Tempo 14 Hari)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Prioritas dropping stok barang dari gudang</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 relative overflow-hidden">
-              <div className="flex justify-between items-center">
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-300 uppercase">
-                  REGULER WALK-IN
-                </span>
-                <Users className="w-4 h-4 text-zinc-400" />
-              </div>
-              <h3 className="font-bold text-white text-base">Pelanggan Umum Toko</h3>
-              <p className="text-xs text-zinc-400">
-                Pembeli umum tanpa registrasi kartu member atau aplikasi PWA.
-              </p>
-              <div className="space-y-1.5 text-xs text-zinc-300 pt-2 border-t border-zinc-800">
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Harga jual retail standar katalog</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Plafon Kasbon: <strong>Rp 0</strong> (Wajib Bayar Lunas)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Dapat diarahkan kasir untuk registrasi PWA</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CustomerTypesManager
+          onSelectCustomerForDetail={(c) => setSelectedCustomer(c)}
+        />
       )}
 
       {/* VIEW: HUTANG PELANGGAN (PIUTANG DAGANG) */}
@@ -726,7 +702,13 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
                             Lunasi Kasbon
                           </button>
                           <button
-                            onClick={() => alert(`Pesan pengingat tagihan WhatsApp otomatis dikirim ke ${c.phone}`)}
+                            onClick={() => {
+                              setWaCustomer(c);
+                              setWaMessageText(
+                                `Halo Kak *${c.name}*,\n\nKami dari *RiskCart Store* ingin menginformasikan pengingat tagihan kasbon belanja sebesar *Rp ${c.debtAmount.toLocaleString('id-ID')}* (jatuh tempo ${c.debtAgeDays} hari).\n\nMohon kesediaan konfirmasi pelunasan di kasir toko atau via transfer. Terima kasih banyak! 🙏`
+                              );
+                              setShowWaReminderModal(true);
+                            }}
                             className="p-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
                             title="Kirim Pengingat WA"
                           >
@@ -823,7 +805,7 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
               </p>
             </div>
             <button
-              onClick={() => alert('Form langganan baru dibuka!')}
+              onClick={() => setShowAddSubModal(true)}
               className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
             >
               <Plus className="w-4 h-4" />
@@ -1253,6 +1235,170 @@ export const CustomerModule: React.FC<CustomerModuleProps> = ({
                   className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-500"
                 >
                   Posting Poin ke Ledger
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Buat Langganan Baru */}
+      {showAddSubModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Buat Paket Langganan Rutin</h3>
+              </div>
+              <button
+                onClick={() => setShowAddSubModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveSubscription} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Nama Pelanggan *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Budi Santoso / RM Sederhana"
+                  value={newSubCustomer}
+                  onChange={(e) => setNewSubCustomer(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Paket Produk Langganan</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Misal: Galon Aqua 5x / Gas 3Kg / Sembako"
+                  value={newSubPlan}
+                  onChange={(e) => setNewSubPlan(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Siklus Pengiriman</label>
+                  <select
+                    value={newSubCycle}
+                    onChange={(e) => setNewSubCycle(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="Mingguan (Setiap Selasa & Jumat)">Mingguan (Selasa & Jumat)</option>
+                    <option value="Setiap Hari Kerja (Senin - Jumat)">Harian (Senin - Jumat)</option>
+                    <option value="Dua Mingguan">Dua Mingguan</option>
+                    <option value="Bulanan (Tanggal 1)">Bulanan (Tgl 1)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1">Tarif per Siklus (Rp)</label>
+                  <input
+                    type="number"
+                    required
+                    min={1000}
+                    step={1000}
+                    value={newSubAmount}
+                    onChange={(e) => setNewSubAmount(Number(e.target.value))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Jadwal Pengiriman Pertama / Berikutnya</label>
+                <input
+                  type="text"
+                  placeholder="Misal: 15 Okt 2026"
+                  value={newSubNextDate}
+                  onChange={(e) => setNewSubNextDate(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddSubModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition shadow-lg"
+                >
+                  Simpan Langganan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Pengingat Tagihan WhatsApp */}
+      {showWaReminderModal && waCustomer && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Send className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Kirim Pengingat Kasbon WA</h3>
+              </div>
+              <button
+                onClick={() => setShowWaReminderModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSendWaReminder} className="space-y-4 pt-4 text-xs">
+              <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 flex justify-between items-center">
+                <div>
+                  <span className="font-bold text-white block">{waCustomer.name}</span>
+                  <span className="text-[11px] text-zinc-400">{waCustomer.phone}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-zinc-500 block">Total Tagihan:</span>
+                  <span className="font-mono font-bold text-rose-400">
+                    Rp {waCustomer.debtAmount?.toLocaleString('id-ID')}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-400 font-bold mb-1">Isi Pesan WhatsApp Otomatis (Fonnte Gateway):</label>
+                <textarea
+                  rows={5}
+                  required
+                  value={waMessageText}
+                  onChange={(e) => setWaMessageText(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white leading-relaxed focus:outline-none focus:border-emerald-500 resize-none font-sans"
+                />
+              </div>
+
+              {waFeedback && (
+                <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 text-xs font-bold text-zinc-200">
+                  {waFeedback}
+                </div>
+              )}
+
+              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowWaReminderModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingWa}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold transition shadow-lg flex items-center gap-1.5"
+                >
+                  <Send className={`w-3.5 h-3.5 ${isSendingWa ? 'animate-bounce' : ''}`} />
+                  <span>{isSendingWa ? 'Mengirim via Server...' : 'Kirim Sekarang'}</span>
                 </button>
               </div>
             </form>

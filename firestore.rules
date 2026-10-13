@@ -2,13 +2,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Stores collection (Store configuration & geofencing center)
+    // Stores collection & all nested subcollections
     match /stores/{storeId} {
       allow read, write: if true;
+
+      match /{allChildren=**} {
+        allow read, write: if true;
+      }
     }
 
     // Products collection (Inventory with carton-to-unit conversion)
     match /products/{productId} {
+      allow read, write: if true;
+    }
+
+    // Categories collection
+    match /categories/{categoryId} {
+      allow read, write: if true;
+    }
+
+    // Stock movements collection
+    match /stock_movements/{movementId} {
       allow read, write: if true;
     }
 
@@ -18,6 +32,10 @@ service cloud.firestore {
 
       // Line items subcollection
       match /items/{itemId} {
+        allow read, write: if true;
+      }
+
+      match /{allChildren=**} {
         allow read, write: if true;
       }
     }
@@ -46,15 +64,27 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Demo seed collection
+    // Demo seed and meta collections
     match /seed/{seedId} {
       allow read, write: if true;
     }
 
-    // Fallback for demo environment
+    match /meta/{metaId} {
+      allow read, write: if true;
+    }
+
+    // AI Agents and Execution Logs
+    match /ai_agents/{agentId} {
+      allow read, write: if true;
+    }
+
+    match /ai_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Catch-all for any other collections
     match /{document=**} {
       allow read, write: if true;
     }
   }
 }
-

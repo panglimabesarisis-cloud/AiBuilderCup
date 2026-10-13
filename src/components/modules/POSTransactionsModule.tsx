@@ -365,22 +365,21 @@ export const POSTransactionsModule: React.FC<POSTransactionsModuleProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header & Sub-Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <ShoppingBag className="w-6 h-6 text-blue-500" />
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              5.13 TRANSAKSI POS &amp; BUKU KAS
-            </h1>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Audit histori struk penjualan kasir, pelacakan arus pendapatan masuk (pemisahan omzet vs pelunasan piutang), dan pengeluaran operasional toko.
-          </p>
+      {/* Header */}
+      <div className="pb-4 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <ShoppingBag className="w-6 h-6 text-blue-500" />
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            5.13 TRANSAKSI POS &amp; BUKU KAS
+          </h1>
         </div>
+        <p className="text-xs text-zinc-400 mt-1">
+          Audit histori struk penjualan kasir, pelacakan arus pendapatan masuk (pemisahan omzet vs pelunasan piutang), dan pengeluaran operasional toko.
+        </p>
+      </div>
 
-        {/* Sub-Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto">
+      {/* Sub-Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-xl overflow-x-auto w-fit max-w-full mb-4">
           <button
             onClick={() => setActiveSub('transaksi_penjualan')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
@@ -409,7 +408,6 @@ export const POSTransactionsModule: React.FC<POSTransactionsModuleProps> = ({
             <span>Pengeluaran Toko</span>
           </button>
         </div>
-      </div>
 
       {/* VIEW: TRANSAKSI PENJUALAN */}
       {activeSub === 'transaksi_penjualan' && (
@@ -766,9 +764,10 @@ export const POSTransactionsModule: React.FC<POSTransactionsModuleProps> = ({
                 <div className="pt-2 flex justify-between items-center gap-2">
                   <button
                     onClick={() => {
-                      alert(`Struk #${selectedTrx.id} dicetak ke printer thermal.`);
+                      window.print();
                     }}
                     className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition flex items-center gap-1.5"
+                    title="Cetak Struk ke Printer Thermal"
                   >
                     <Printer className="w-4 h-4" />
                     <span>Cetak Struk Ulang</span>
