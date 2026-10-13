@@ -442,21 +442,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Menu Search Bar */}
           {!collapsed && (
             <div className="space-y-1.5 pt-1">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2.5 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Cari menu & agen AI..."
-                  className="w-full bg-zinc-950/90 border border-zinc-800 rounded-xl pl-8 pr-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-                />
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="absolute right-2 top-2 text-zinc-500 hover:text-white">
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
 
               {/* Expand / Collapse All Quick Controls */}
               <div className="flex items-center justify-between px-1 text-[10px] text-zinc-400">

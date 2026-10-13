@@ -101,6 +101,7 @@ function AppContent() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onToggleSidebar={handleToggleSidebar}
+        setActiveSubModule={setActiveSubModule}
       />
 
       {/* 2. MAIN WORKSPACE CONTAINER - Sidebar persistent on all pages, content never covered */}

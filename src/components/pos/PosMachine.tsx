@@ -833,6 +833,23 @@ export const PosMachine: React.FC<PosMachineProps> = ({
           </div>
         )}
 
+        {/* Product search (above category tabs) */}
+        <div className="px-4 sm:px-6 pt-3 bg-zinc-950 shrink-0">
+          <div className="max-w-md">
+            <div className="relative w-full min-w-0">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-zinc-500" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search product name or SKU..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Category Tabs Strip (Exactly like screenshot) */}
         <div className="px-4 sm:px-6 py-3 bg-zinc-950 border-b border-zinc-850 flex items-center gap-2 overflow-x-auto shrink-0">
           {categoryTabs.map((cat) => (
@@ -853,18 +870,6 @@ export const PosMachine: React.FC<PosMachineProps> = ({
         {/* Search, Filter & Customer Toolbar */}
         <div className="px-4 sm:px-6 py-3 bg-zinc-950 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2 flex-1 max-w-md min-w-0">
-            <div className="relative w-full min-w-0">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-zinc-500" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="Search product name or SKU..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
